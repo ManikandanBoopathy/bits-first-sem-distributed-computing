@@ -1,0 +1,46 @@
+version: "3.9"
+
+services:
+  hub:
+    build: .
+    environment:
+      - PROCESS_NAME=hub
+      - USE_DOCKER=true
+    ports:
+      - "5000:5000"
+    networks:
+      - delivery-net
+
+  restaurant1:
+    build: .
+    environment:
+      - PROCESS_NAME=restaurant1
+      - USE_DOCKER=true
+    ports:
+      - "5001:5000"
+    networks:
+      - delivery-net
+
+  restaurant2:
+    build: .
+    environment:
+      - PROCESS_NAME=restaurant2
+      - USE_DOCKER=true
+    ports:
+      - "5002:5000"
+    networks:
+      - delivery-net
+
+  delivery1:
+    build: .
+    environment:
+      - PROCESS_NAME=delivery1
+      - USE_DOCKER=true
+    ports:
+      - "5003:5000"
+    networks:
+      - delivery-net
+
+networks:
+  delivery-net:
+    driver: bridge
