@@ -32,6 +32,19 @@ PROCESS_NAME=delivery1    PORT=5003 python app.py &
 python demo.py
 ```
 
+## Run the Streamlit dashboard
+
+With the four Flask processes running, start the visualization in another terminal:
+
+```bash
+streamlit run dashboard.py
+```
+
+Open `http://localhost:8501`. The dashboard polls each process's `/health`, `/state`,
+and `/snapshot/state` endpoints. Use **Demo preview** in the sidebar to view the
+visual design without starting the backend processes, or use **Start global snapshot**
+to initiate Chandy-Lamport recording at the hub while running live.
+
 `demo.py` will:
 1. Wait for all 4 processes to be healthy.
 2. Fire `restaurant1` and `restaurant2` order placements concurrently.
