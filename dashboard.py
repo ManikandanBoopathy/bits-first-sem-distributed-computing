@@ -56,6 +56,11 @@ section[data-testid="stSidebar"] .block-container { padding:1.5rem 1.1rem; }
 .node strong { display:block; font-size:12px; color:#fff; } .node small { display:block; color:#9694b8; font-size:10px; margin-top:5px; }
 .topology { position:relative; height:330px; border:1px solid #1e2045; border-radius:8px; background:radial-gradient(circle at 50% 48%,#1a1740 0,#0b0c25 65%); overflow:hidden; }
 .topology svg { position:absolute; inset:0; width:100%; height:100%; }
+.topology .flow-line.active { stroke-dasharray:10 8; animation:channel-flow .7s linear 3; }
+.topology .pulse { opacity:0; filter:url(#glow); }
+.topology .pulse.active { animation:pulse-travel 2.1s ease-out 1; }
+@keyframes channel-flow { to { stroke-dashoffset:-36; } }
+@keyframes pulse-travel { 0% { opacity:0; } 12% { opacity:1; } 70% { opacity:1; } 100% { opacity:0; } }
 .n-hub { top:25px; left:calc(50% - 61px); } .n-r1 { top:125px; left:7%; } .n-r2 { top:125px; right:7%; } .n-d1 { bottom:17px; left:calc(50% - 61px); }
 .event { display:flex; gap:10px; padding:9px 0; border-bottom:1px solid #202142; font-size:11px; align-items:center; } .event:last-child { border:0; } .event-time { width:65px; color:#8583a9; font-family:'DM Mono',monospace; } .event-kind { color:#fff; flex:1; } .event-vc { color:#8e8cff; font-family:'DM Mono',monospace; font-size:10px; }
 .clock-table { width:100%; border-collapse:collapse; font-size:11px; } .clock-table th,.clock-table td { padding:9px 7px; border-bottom:1px solid #242449; text-align:center; } .clock-table th { color:#aaa8d6; background:#171735; } .clock-table td:first-child,.clock-table th:first-child { text-align:left; } .clock-table td { color:#e5e3ff; font-family:'DM Mono',monospace; }
@@ -69,6 +74,7 @@ section[data-testid="stSidebar"] .block-container { padding:1.5rem 1.1rem; }
 )
 
 
+@st.cache_data(ttl=2, show_spinner=False)
 def fetch_processes(hosts):
     states = {}
     for process, base_url in hosts.items():
@@ -127,6 +133,20 @@ def event_rows(states):
     return sorted(rows, reverse=True)[:7]
 
 
+def active_channels(states):
+    current_events = set()
+    for info in states.values():
+        for event in info.get("state", {}).get("log", []):
+            detail = event.get("detail", {})
+            if event.get("event") in ("send", "receive") and isinstance(detail, dict):
+                channel = detail.get("channel")
+                if channel:
+                    current_events.add((event.get("wall_time"), event.get("event"), channel))
+    previous_events = st.session_state.get("seen_events", set())
+    st.session_state["seen_events"] = current_events
+    return {channel for _, _, channel in current_events - previous_events}
+
+
 with st.sidebar:
     st.markdown('<div class="team-logo"><div class="logo-mark">◈</div><div><div class="logo-name">TEAM 14</div><div class="logo-sub">DISTRIBUTED SYSTEMS LAB</div></div></div>', unsafe_allow_html=True)
     st.markdown("**Monitor controls**")
@@ -136,43 +156,54 @@ with st.sidebar:
     refresh_seconds = st.slider("Refresh interval", 2, 15, 5, disabled=not refresh)
     st.divider()
     st.caption("Four independent Flask processes connected by HTTP channels.")
-    st.markdown("**Live workflow**")
-    order_id = st.text_input("New order ID", placeholder="order-101", disabled=mode != "Live processes")
-    restaurant = st.selectbox(
-        "Restaurant",
-        options=["restaurant1", "restaurant2"],
-        format_func=lambda process: LABELS[process],
-        disabled=mode != "Live processes",
-    )
-    if st.button("Place order", use_container_width=True, disabled=mode != "Live processes"):
+    known_orders = sorted(states.get("hub", {}).get("state", {}).get("orders", {}))
+    with st.form("workflow_controls", clear_on_submit=False):
+        st.markdown("**Live workflow**")
+        order_id = st.text_input("New order ID", placeholder="order-101", disabled=mode != "Live processes")
+        restaurant = st.selectbox(
+            "Restaurant",
+            options=["restaurant1", "restaurant2"],
+            format_func=lambda process: LABELS[process],
+            disabled=mode != "Live processes",
+        )
+        delivery_order = st.selectbox(
+            "Delivery order",
+            options=known_orders or [""],
+            disabled=mode != "Live processes" or not known_orders,
+            format_func=lambda value: value or "No orders at hub",
+        )
+        pickup_col, deliver_col, place_col = st.columns(3)
+        with pickup_col:
+            pickup_clicked = st.form_submit_button("Pickup", use_container_width=True, disabled=mode != "Live processes" or not known_orders)
+        with deliver_col:
+            deliver_clicked = st.form_submit_button("Deliver", use_container_width=True, disabled=mode != "Live processes" or not known_orders)
+        with place_col:
+            place_clicked = st.form_submit_button("Place order", use_container_width=True, disabled=mode != "Live processes")
+
+    if place_clicked:
         try:
             result = trigger_process(restaurant, "place_order", order_id or None)
             st.toast(f"Order {result['order_id']} placed")
+            st.cache_data.clear()
+            st.rerun()
         except requests.RequestException as error:
             st.error(f"Could not place order: {error}")
-
-    known_orders = sorted(states.get("hub", {}).get("state", {}).get("orders", {}))
-    delivery_order = st.selectbox(
-        "Delivery order",
-        options=known_orders or [""],
-        disabled=mode != "Live processes" or not known_orders,
-        format_func=lambda value: value or "No orders at hub",
-    )
-    pickup_col, deliver_col = st.columns(2)
-    with pickup_col:
-        if st.button("Pickup", use_container_width=True, disabled=mode != "Live processes" or not known_orders):
-            try:
-                trigger_process("delivery1", "pickup", delivery_order)
-                st.toast(f"Order {delivery_order} picked up")
-            except requests.RequestException as error:
-                st.error(f"Pickup failed: {error}")
-    with deliver_col:
-        if st.button("Deliver", use_container_width=True, disabled=mode != "Live processes" or not known_orders):
-            try:
-                trigger_process("delivery1", "deliver", delivery_order)
-                st.toast(f"Order {delivery_order} delivered")
-            except requests.RequestException as error:
-                st.error(f"Delivery failed: {error}")
+    elif pickup_clicked:
+        try:
+            trigger_process("delivery1", "pickup", delivery_order)
+            st.toast(f"Order {delivery_order} picked up")
+            st.cache_data.clear()
+            st.rerun()
+        except requests.RequestException as error:
+            st.error(f"Pickup failed: {error}")
+    elif deliver_clicked:
+        try:
+            trigger_process("delivery1", "deliver", delivery_order)
+            st.toast(f"Order {delivery_order} delivered")
+            st.cache_data.clear()
+            st.rerun()
+        except requests.RequestException as error:
+            st.error(f"Delivery failed: {error}")
 
     if st.button("Start global snapshot", use_container_width=True):
         try:
@@ -183,6 +214,7 @@ with st.sidebar:
 
 online_count = sum(info["online"] for info in states.values())
 all_events = event_rows(states)
+recent_channels = active_channels(states)
 all_orders = sum(len(info.get("state", {}).get("orders", {})) for info in states.values())
 complete_snapshot = all(info.get("snapshot", {}).get("complete", False) for info in states.values())
 
@@ -196,7 +228,10 @@ for col, value, label in zip(metric_cols, [f"{online_count}/4", all_orders, len(
 st.write("")
 left, right = st.columns([1.45, 1])
 with left:
-    st.markdown('<div class="panel"><div class="panel-title">⌁ System topology</div><div class="topology"><svg viewBox="0 0 700 330" preserveAspectRatio="none"><defs><filter id="glow"><feGaussianBlur stdDeviation="3" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><g fill="none" stroke-width="2" filter="url(#glow)"><path d="M350 74 L150 151" stroke="#27c9ff"/><path d="M350 74 L550 151" stroke="#f25cc7"/><path d="M150 190 L350 280" stroke="#27c9ff"/><path d="M550 190 L350 280" stroke="#f25cc7"/><path d="M350 100 L350 270" stroke="#b66cff"/><path d="M170 165 L530 165" stroke="#b66cff"/></g><g fill="#fff"><circle cx="245" cy="114" r="4"/><circle cx="455" cy="114" r="4"/><circle cx="350" cy="190" r="4"/><circle cx="350" cy="230" r="4"/></g></svg><div class="node n-hub" style="--node:#b66cff"><strong>▦ HUB</strong><small>PORT 5000 · ONLINE</small></div><div class="node n-r1" style="--node:#27c9ff"><strong>▤ RESTAURANT 1</strong><small>PORT 5001 · ONLINE</small></div><div class="node n-r2" style="--node:#f25cc7"><strong>▤ RESTAURANT 2</strong><small>PORT 5002 · ONLINE</small></div><div class="node n-d1" style="--node:#53dd83"><strong>♧ DELIVERY 1</strong><small>PORT 5003 · ONLINE</small></div></div></div>', unsafe_allow_html=True)
+    flow_paths = [("r1_hub", "M150 151 L350 74", "#27c9ff"), ("r2_hub", "M550 151 L350 74", "#f25cc7"), ("hub_r1", "M350 74 L150 151", "#27c9ff"), ("hub_r2", "M350 74 L550 151", "#f25cc7"), ("hub_d1", "M350 100 L350 270", "#b66cff"), ("d1_hub", "M350 270 L350 100", "#53dd83")]
+    flow_lines = "".join(f"<path class='flow-line{' active' if channel in recent_channels else ''}' d='{path}' stroke='{color}'/>" for channel, path, color in flow_paths)
+    flow_pulses = "".join(f"<circle class='pulse{' active' if channel in recent_channels else ''}' r='4'><animateMotion dur='2.1s' repeatCount='1' path='{path[1:]}'/></circle>" for channel, path, _ in flow_paths)
+    st.markdown(f'<div class="panel"><div class="panel-title">⌁ System topology</div><div class="topology"><svg viewBox="0 0 700 330" preserveAspectRatio="none"><defs><filter id="glow"><feGaussianBlur stdDeviation="3" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><g fill="none" stroke-width="2" filter="url(#glow)">{flow_lines}</g><g fill="#fff"><circle cx="245" cy="114" r="4"/><circle cx="455" cy="114" r="4"/><circle cx="350" cy="190" r="4"/><circle cx="350" cy="230" r="4"/></g><g class="flow-pulses" fill="#fff">{flow_pulses}</g></svg><div class="node n-hub" style="--node:#b66cff"><strong>▦ HUB</strong><small>PORT 5000 · ONLINE</small></div><div class="node n-r1" style="--node:#27c9ff"><strong>▤ RESTAURANT 1</strong><small>PORT 5001 · ONLINE</small></div><div class="node n-r2" style="--node:#f25cc7"><strong>▤ RESTAURANT 2</strong><small>PORT 5002 · ONLINE</small></div><div class="node n-d1" style="--node:#53dd83"><strong>♧ DELIVERY 1</strong><small>PORT 5003 · ONLINE</small></div></div></div>', unsafe_allow_html=True)
 with right:
     clock_headers = ["Process"] + [p[:2].upper() for p in PROCESSES]
     table = "<table class='clock-table'><tr>" + "".join(f"<th>{header}</th>" for header in clock_headers) + "</tr>"
