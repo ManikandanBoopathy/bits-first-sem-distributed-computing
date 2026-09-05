@@ -1,0 +1,33 @@
+{
+  "process_state": {
+    "process": "DeliveryPartner",
+    "vector_clock": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "local_state": {}
+  },
+  "channel_states": {
+    "OrderProcessor": [],
+    "Restaurant1": [
+      {
+        "type": "OrderReady",
+        "from": "Restaurant1",
+        "to": "DeliveryPartner",
+        "payload": {
+          "order_id": 101,
+          "restaurant": "Restaurant1"
+        },
+        "vc": [
+          0,
+          2,
+          3,
+          0
+        ]
+      }
+    ],
+    "Restaurant2": []
+  }
+}

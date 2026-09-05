@@ -1,0 +1,19 @@
+{
+  "process_state": {
+    "process": "Restaurant2",
+    "vector_clock": [
+      0,
+      4,
+      0,
+      2
+    ],
+    "local_state": {
+      "Order#102": "RECEIVED"
+    }
+  },
+  "channel_states": {
+    "OrderProcessor": [],
+    "Restaurant1": [],
+    "DeliveryPartner": []
+  }
+}
