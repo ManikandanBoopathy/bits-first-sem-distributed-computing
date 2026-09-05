@@ -21,6 +21,9 @@ terminal:
 pip install -r requirements.txt   # only need `requests` on the host
 python demo.py --docker
 ```
+Open http://localhost:5000/ to use the live Food Delivery Command Center. The
+dashboard polls the four process health/state endpoints, shows vector clocks and
+recent events, and can place orders or start a global snapshot through the hub.
 
 ## Run it — locally, no Docker (quick dev loop)
 ```bash

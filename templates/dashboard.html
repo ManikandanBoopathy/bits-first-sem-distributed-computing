@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Team 14| Food Delivery Distributed Computing Assignment</title>
+  <link rel="icon" type="image/png" href="https://res.cloudinary.com/krishnamohan479/image/upload/v1788624435/6335524_ufypph.png">
+    <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css', v='bidirectional-paths-14') }}">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark"><img src="{{ url_for('static', filename='logo.png') }}" alt="Team 14 logo"></div>
+        <div><strong>TEAM 14</strong><span>DISTRIBUTED COMPUTING ASSIGNMENT 1</span></div>
+      </div>
+      <section class="side-section">
+        <h2>Monitor controls</h2>
+        <button id="demo-button" class="demo-button"><span class="dot"></span>Run demo workflow</button>
+        <label class="switch-row"><input id="refresh-toggle" type="checkbox" checked><span class="switch"></span>Auto refresh</label>
+        <label class="range-label" for="refresh-range">Refresh interval <output id="refresh-value">3s</output></label>
+        <input id="refresh-range" type="range" min="1" max="10" value="3">
+      </section>
+      <section class="workflow">
+        <h2>Live workflow</h2>
+        <label for="order-id">New order ID</label>
+        <input id="order-id" placeholder="Auto-generated if blank" autocomplete="off">
+        <label for="restaurant">Restaurant</label>
+        <select id="restaurant"><option value="restaurant1">Restaurant 1</option><option value="restaurant2">Restaurant 2</option></select>
+        <button id="place-order" class="primary">Place order <span>↗</span></button>
+        <button id="snapshot-button" class="secondary">Run Chandy-Lamport snapshot</button>
+        <p id="action-status" class="action-status">Ready for an operation.</p>
+      </section>
+    </aside>
+
+    <main class="main-content">
+      <div class="content-wrap">
+        <div class="page-heading"><div><h1>Food Delivery Command Center</h1></div><div id="health-pill" class="health-pill"><span></span>Checking processes</div></div>
+
+        <section class="stats-grid">
+          <div class="stat"><strong id="process-count">-</strong><span>Processes online</span></div>
+          <div class="stat"><strong id="order-count">-</strong><span>Orders observed</span></div>
+          <div class="stat"><strong id="event-count">-</strong><span>Recent events</span></div>
+          <div class="stat"><strong id="snapshot-status">-</strong><span>Snapshot state</span></div>
+        </section>
+
+        <section class="top-grid">
+          <article class="panel topology-panel"><div class="panel-heading"><h2>⌁ System topology</h2><span id="last-updated">Waiting for data</span></div><div id="topology" class="topology"><div class="node hub"><img src="{{ url_for('static', filename='hub.png') }}" alt="Hub logo"><small><i class="status-dot"></i>PORT 5000</small></div><div class="node restaurant-one"><img src="{{ url_for('static', filename='re1.png') }}" alt="Restaurant 1 logo"><small><i class="status-dot"></i>PORT 5001</small></div><div class="node restaurant-two"><img src="{{ url_for('static', filename='re2.png') }}" alt="Restaurant 2 logo"><small><i class="status-dot"></i>PORT 5002</small></div><div class="node delivery"><img src="{{ url_for('static', filename='bike.png') }}" alt="Delivery partner"><small><i class="status-dot"></i>PORT 5003</small></div><i class="line line-one"></i><i class="line line-two"></i><i class="line line-three"></i><i class="line line-four"></i></div></article>
+          <article class="panel clock-panel"><div class="panel-heading"><h2>◷ Vector clocks</h2><span>latest local snapshots</span></div><div class="table-wrap"><table><thead><tr><th>Process</th><th>HU</th><th>RE</th><th>RE</th><th>DE</th></tr></thead><tbody id="clock-table"><tr><td colspan="5" class="empty">No process data yet</td></tr></tbody></table></div><p id="event-summary" class="evidence-summary">Event evidence: internal 0 · send 0 · receive 0</p></article>
+        </section>
+
+        <section class="event-panel panel"><div class="panel-heading"><h2>⌁ Event log</h2><span>internal · send · receive</span></div><div class="table-wrap"><table><thead><tr><th>Process</th><th>Event</th><th>Description</th><th>Vector timestamp</th><th>Time</th></tr></thead><tbody id="event-log-table"><tr><td colspan="5" class="empty">Waiting for events...</td></tr></tbody></table></div></section>
+
+        <section class="bottom-grid">
+          <article class="panel"><div class="panel-heading"><h2>◈ Chandy-Lamport snapshot</h2><span>process state at cut</span></div><p id="concurrency-detail" class="snapshot-detail">No concurrent pair detected yet.</p><div class="table-wrap"><table><thead><tr><th>Process</th><th>State</th><th>VC</th><th>Cut</th></tr></thead><tbody id="snapshot-table"><tr><td colspan="4" class="empty">Run a snapshot to record global state.</td></tr></tbody></table></div></article>
+          <article class="panel"><div class="panel-heading"><h2>↗ Global snapshot / channels</h2><span id="channel-count">0 channels</span></div><p id="snapshot-detail" class="snapshot-detail">Chandy-Lamport is idle.</p><div id="channel-list" class="channel-list"><p class="empty">No snapshot recorded yet.</p></div></article>
+        </section>
+      </div>
+    </main>
+  </div>
+  <script src="{{ url_for('static', filename='dashboard.js') }}"></script>
+</body>
+</html>

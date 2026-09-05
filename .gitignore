@@ -1,1 +1,16 @@
 .venv/
+
+# Python bytecode and local tooling caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+
+# Demo/runtime output
+global_snapshot.json
+
+# Local editor and OS files
+.vscode/
+.DS_Store
+Thumbs.db

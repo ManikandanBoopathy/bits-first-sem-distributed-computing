@@ -10,7 +10,7 @@ import time
 import threading
 from functools import wraps
 
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template
 import requests
 
 from common.vector_clock import VectorClock, compare
@@ -203,6 +203,11 @@ def _check_complete():
 # --------------------------------------------------------------------------- #
 # Routes
 # --------------------------------------------------------------------------- #
+@app.get("/")
+def dashboard():
+    return render_template("dashboard.html")
+
+
 @app.get("/health")
 def health():
     return jsonify({"process": PROCESS_NAME, "status": "ok"})
@@ -217,6 +222,179 @@ def get_state():
             "orders": state["orders"],
             "log": state["log"],
         })
+
+
+@app.get("/api/dashboard")
+def dashboard_data():
+    """Return a browser-friendly view of the whole distributed system.
+
+    The dashboard is hosted by the hub, so it can use the hub container's
+    network to query every process without exposing cross-origin requests.
+    """
+    processes = []
+    all_orders = {}
+    recent_events = []
+
+    for process in channels.PROCESSES:
+        base = channels.base_url(process, USE_DOCKER)
+        process_data = {"process": process, "status": "offline", "orders": {}, "log": []}
+        try:
+            health_response = requests.get(f"{base}/health", timeout=2)
+            state_response = requests.get(f"{base}/state", timeout=2)
+            health_response.raise_for_status()
+            state_response.raise_for_status()
+            state_data = state_response.json()
+            process_data.update({
+                "status": "online",
+                "vector_clock": state_data.get("vector_clock", {}),
+                "orders": state_data.get("orders", {}),
+                "log": state_data.get("log", []),
+            })
+            for order_id, order in state_data.get("orders", {}).items():
+                all_orders.setdefault(order_id, {}).update(order)
+            recent_events.extend(
+                {**event, "process": process}
+                for event in state_data.get("log", [])[-8:]
+            )
+        except requests.RequestException as error:
+            process_data["error"] = str(error)
+
+        processes.append(process_data)
+
+    snapshots = {}
+    for process in channels.PROCESSES:
+        try:
+            snapshot_response = requests.get(
+                f"{channels.base_url(process, USE_DOCKER)}/snapshot/state",
+                timeout=2,
+            )
+            snapshot_response.raise_for_status()
+            snapshots[process] = snapshot_response.json()
+        except requests.RequestException:
+            snapshots[process] = None
+
+    complete_snapshots = [item for item in snapshots.values() if item and item.get("complete")]
+    snapshot_data = {
+        "complete": len(complete_snapshots) == len(channels.PROCESSES),
+        "recording": any(item and item.get("recording") for item in snapshots.values()),
+        "processes": snapshots,
+        "consistent": len(complete_snapshots) == len(channels.PROCESSES),
+    }
+
+    concurrency = None
+    event_entries = []
+    for process in processes:
+        event_entries.extend(
+            {**event, "process": process["process"]}
+            for event in process.get("log", [])
+        )
+    for index, first in enumerate(event_entries):
+        for second in event_entries[index + 1:]:
+            if first["process"] == second["process"]:
+                continue
+            if compare(first.get("vc", {}), second.get("vc", {})) == "concurrent":
+                concurrency = {"first": first, "second": second}
+                break
+        if concurrency:
+            break
+
+    recent_events.sort(key=lambda event: event.get("wall_time", 0), reverse=True)
+    return jsonify({
+        "process": PROCESS_NAME,
+        "processes": processes,
+        "orders": all_orders,
+        "events": recent_events[:20],
+        "snapshot": snapshot_data,
+        "concurrency": concurrency,
+        "channels": channels.CHANNELS,
+    })
+
+
+@app.post("/api/orders")
+def dashboard_place_order():
+    body = request.get_json(force=True) or {}
+    restaurant = body.get("restaurant", "restaurant1")
+    order_id = body.get("order_id") or f"order-{int(time.time() * 1000)}"
+    if restaurant not in ("restaurant1", "restaurant2"):
+        return jsonify({"error": "a valid restaurant is required"}), 400
+
+    try:
+        response = requests.post(
+            f"{channels.base_url(restaurant, USE_DOCKER)}/trigger/place_order",
+            json={"order_id": order_id},
+            timeout=5,
+        )
+        return jsonify(response.json()), response.status_code
+    except requests.RequestException as error:
+        return jsonify({"error": str(error)}), 502
+
+
+@app.post("/api/snapshot")
+def dashboard_snapshot():
+    try:
+        response = requests.post(
+            f"{channels.base_url('hub', USE_DOCKER)}/snapshot/start",
+            timeout=5,
+        )
+        return jsonify(response.json()), response.status_code
+    except requests.RequestException as error:
+        return jsonify({"error": str(error)}), 502
+
+
+def run_dashboard_demo():
+    """Run the concurrent order and snapshot sequence without blocking the UI."""
+    order_ids = [
+        f"demo-{int(time.time() * 1000)}-r1",
+        f"demo-{int(time.time() * 1000)}-r2",
+    ]
+
+    def place_order(restaurant, order_id):
+        try:
+            requests.post(
+                f"{channels.base_url(restaurant, USE_DOCKER)}/trigger/place_order",
+                json={"order_id": order_id},
+                timeout=5,
+            )
+        except requests.RequestException:
+            pass
+
+    threads = [
+        threading.Thread(target=place_order, args=("restaurant1", order_ids[0]), daemon=True),
+        threading.Thread(target=place_order, args=("restaurant2", order_ids[1]), daemon=True),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    time.sleep(1)
+    try:
+        hub_state = requests.get(
+            f"{channels.base_url('hub', USE_DOCKER)}/state", timeout=5
+        ).json()
+        for order_id in hub_state.get("orders", {}):
+            requests.post(
+                f"{channels.base_url('delivery1', USE_DOCKER)}/trigger/pickup",
+                json={"order_id": order_id},
+                timeout=5,
+            )
+            requests.post(
+                f"{channels.base_url('delivery1', USE_DOCKER)}/trigger/deliver",
+                json={"order_id": order_id},
+                timeout=5,
+            )
+        time.sleep(1)
+        requests.post(
+            f"{channels.base_url('hub', USE_DOCKER)}/snapshot/start", timeout=5
+        )
+    except requests.RequestException:
+        pass
+
+
+@app.post("/api/demo")
+def dashboard_demo():
+    threading.Thread(target=run_dashboard_demo, daemon=True).start()
+    return jsonify({"started": True, "message": "Demo workflow started"}), 202
 
 
 @app.post("/message")
