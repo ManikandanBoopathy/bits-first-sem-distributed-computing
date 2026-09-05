@@ -44,6 +44,7 @@ _enqueue_locks = {c["id"]: threading.Lock() for c in channels.outgoing(PROCESS_N
 
 snap_lock = threading.Lock()
 snapshot = {
+    "snapshot_id": None,
     "recording": False,
     "complete": False,
     "local_state": None,
@@ -124,10 +125,12 @@ def send_message(dst, msg_type, payload):
         _out_queues[chan["id"]].put(("app", msg))
 
 
-def send_marker(chan):
+def send_marker(chan, snapshot_id):
     """Markers ride the SAME per-channel FIFO queue as application messages."""
     with _enqueue_locks[chan["id"]]:
-        _out_queues[chan["id"]].put(("marker", {"channel_id": chan["id"]}))
+        _out_queues[chan["id"]].put(
+            ("marker", {"channel_id": chan["id"], "snapshot_id": snapshot_id})
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -167,12 +170,13 @@ def handle_message(msg):
 # --------------------------------------------------------------------------- #
 # Chandy-Lamport snapshot engine (generic — identical for every process)
 # --------------------------------------------------------------------------- #
-def _begin_recording():
+def _begin_recording(snapshot_id):
     with state_lock:
         # Deep copy, not dict(): a shallow copy shares the inner per-order
         # dicts with live state, so post-snapshot writes silently mutate the
         # "recorded" state and the snapshot is never actually frozen.
         orders_copy = copy.deepcopy(state["orders"])
+    snapshot["snapshot_id"] = snapshot_id
     snapshot["local_state"] = {"vc": vc.snapshot(), "orders": orders_copy}
     snapshot["channel_states"] = {c["id"]: [] for c in channels.incoming(PROCESS_NAME)}
     snapshot["markers_received"] = set()
@@ -181,31 +185,43 @@ def _begin_recording():
 
 
 def initiate_snapshot():
+    snapshot_id = f"snap-{PROCESS_NAME}-{int(time.time()*1000)}"
     with snap_lock:
         if snapshot["recording"]:
-            return False
-        _begin_recording()
+            return None
+        _begin_recording(snapshot_id)
     for c in channels.outgoing(PROCESS_NAME):
-        send_marker(c)
+        send_marker(c, snapshot_id)
     _check_complete()
-    return True
+    return snapshot_id
 
 
-def receive_marker(channel_id):
+def receive_marker(channel_id, snapshot_id):
     first = False
     with snap_lock:
         if not snapshot["recording"]:
             first = True
-            _begin_recording()
+            _begin_recording(snapshot_id)
             # Per Chandy-Lamport: the channel the marker arrived on records EMPTY.
             snapshot["channel_states"][channel_id] = []
-            snapshot["markers_received"].add(channel_id)
-        else:
-            snapshot["markers_received"].add(channel_id)
+        snapshot["markers_received"].add(channel_id)
     if first:
         for c in channels.outgoing(PROCESS_NAME):
-            send_marker(c)
+            send_marker(c, snapshot_id)
     _check_complete()
+
+
+def reset_snapshot():
+    """Clear recording state so a second snapshot can be demonstrated."""
+    with snap_lock:
+        snapshot.update({
+            "snapshot_id": None,
+            "recording": False,
+            "complete": False,
+            "local_state": None,
+            "channel_states": {},
+            "markers_received": set(),
+        })
 
 
 def on_receive_message(msg):
@@ -296,15 +312,25 @@ def trigger_deliver():
 
 @app.post("/snapshot/start")
 def start_snapshot():
-    started = initiate_snapshot()
-    return jsonify({"started": started, "process": PROCESS_NAME})
+    snapshot_id = initiate_snapshot()
+    return jsonify({
+        "started": snapshot_id is not None,
+        "snapshot_id": snapshot_id,
+        "process": PROCESS_NAME,
+    })
+
+
+@app.post("/snapshot/reset")
+def reset_snapshot_endpoint():
+    reset_snapshot()
+    return jsonify({"status": "reset", "process": PROCESS_NAME})
 
 
 @app.post("/snapshot/marker")
 @require_auth
 def marker():
     body = request.get_json(force=True)
-    receive_marker(body["channel_id"])
+    receive_marker(body["channel_id"], body.get("snapshot_id"))
     return jsonify({"status": "marker-processed"})
 
 
@@ -313,6 +339,7 @@ def snapshot_state():
     with snap_lock:
         return jsonify({
             "process": PROCESS_NAME,
+            "snapshot_id": snapshot["snapshot_id"],
             "recording": snapshot["recording"],
             "complete": snapshot["complete"],
             "local_state": snapshot["local_state"],
