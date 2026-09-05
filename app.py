@@ -68,6 +68,34 @@ def require_auth(f):
     return wrapper
 
 
+def require_declared_channel(f):
+    """FR-009: reject anything not arriving on a declared sender->me channel.
+
+    Runs BEFORE any vector-clock merge or state mutation, so a rejected message
+    leaves the receiver completely untouched.
+    """
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        sender = request.headers.get("X-Process-Name")
+        body = request.get_json(force=True, silent=True) or {}
+        claimed = body.get("channel_id")
+        try:
+            chan = channels.channel_to(sender, PROCESS_NAME)
+        except ValueError:
+            return jsonify({
+                "error": "undeclared_channel",
+                "detail": f"no channel {sender} -> {PROCESS_NAME}",
+            }), 403
+        if claimed != chan["id"]:
+            return jsonify({
+                "error": "channel_id_mismatch",
+                "expected": chan["id"],
+                "got": claimed,
+            }), 403
+        return f(*args, **kwargs)
+    return wrapper
+
+
 def auth_headers():
     return {
         "X-Process-Name": PROCESS_NAME,
@@ -263,6 +291,7 @@ def get_state():
 
 @app.post("/message")
 @require_auth
+@require_declared_channel
 def receive_message():
     msg = request.get_json(force=True)
     on_receive_message(msg)              # snapshot bookkeeping first
@@ -328,6 +357,7 @@ def reset_snapshot_endpoint():
 
 @app.post("/snapshot/marker")
 @require_auth
+@require_declared_channel
 def marker():
     body = request.get_json(force=True)
     receive_marker(body["channel_id"], body.get("snapshot_id"))
