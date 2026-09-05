@@ -6,6 +6,7 @@ PROCESS_NAME environment variable (restaurant1 | restaurant2 | delivery1 | hub).
 All four roles share this exact same code, per the project constitution.
 """
 import os
+import copy
 import time
 import threading
 from functools import wraps
@@ -147,7 +148,10 @@ def handle_message(msg):
 # --------------------------------------------------------------------------- #
 def _begin_recording():
     with state_lock:
-        orders_copy = dict(state["orders"])
+        # Deep copy, not dict(): a shallow copy shares the inner per-order
+        # dicts with live state, so post-snapshot writes silently mutate the
+        # "recorded" state and the snapshot is never actually frozen.
+        orders_copy = copy.deepcopy(state["orders"])
     snapshot["local_state"] = {"vc": vc.snapshot(), "orders": orders_copy}
     snapshot["channel_states"] = {c["id"]: [] for c in channels.incoming(PROCESS_NAME)}
     snapshot["markers_received"] = set()
