@@ -147,6 +147,13 @@ document.querySelector('#event-log-table').addEventListener('click', (event) => 
   const row = event.target.closest('tr[data-process]');
   if (row) pulseProcessPath(row.dataset.process);
 });
+const eventLogPanel = document.querySelector('#event-panel');
+const eventLogToggle = document.querySelector('#event-log-toggle');
+eventLogToggle.addEventListener('click', () => {
+  const collapsed = eventLogPanel.classList.toggle('collapsed');
+  eventLogToggle.setAttribute('aria-expanded', String(!collapsed));
+  eventLogToggle.textContent = collapsed ? 'Expand' : 'Collapse';
+});
 refreshRange.addEventListener('input', () => { refreshValue.textContent = `${refreshRange.value}s`; scheduleRefresh(); });
 refreshToggle.addEventListener('change', scheduleRefresh);
 function scheduleRefresh() { clearInterval(refreshTimer); if (refreshToggle.checked) refreshTimer = setInterval(loadDashboard, Number(refreshRange.value) * 1000); }

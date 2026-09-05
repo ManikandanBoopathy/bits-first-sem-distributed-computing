@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Team 14| Food Delivery Distributed Computing Assignment</title>
   <link rel="icon" type="image/png" href="https://res.cloudinary.com/krishnamohan479/image/upload/v1788624435/6335524_ufypph.png">
-    <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css', v='bidirectional-paths-14') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css', v='collapsible-events-15') }}">
 </head>
 <body>
   <div class="app-shell">
@@ -49,7 +49,7 @@
           <article class="panel clock-panel"><div class="panel-heading"><h2>◷ Vector clocks</h2><span>latest local snapshots</span></div><div class="table-wrap"><table><thead><tr><th>Process</th><th>HU</th><th>RE</th><th>RE</th><th>DE</th></tr></thead><tbody id="clock-table"><tr><td colspan="5" class="empty">No process data yet</td></tr></tbody></table></div><p id="event-summary" class="evidence-summary">Event evidence: internal 0 · send 0 · receive 0</p></article>
         </section>
 
-        <section class="event-panel panel"><div class="panel-heading"><h2>⌁ Event log</h2><span>internal · send · receive</span></div><div class="table-wrap"><table><thead><tr><th>Process</th><th>Event</th><th>Description</th><th>Vector timestamp</th><th>Time</th></tr></thead><tbody id="event-log-table"><tr><td colspan="5" class="empty">Waiting for events...</td></tr></tbody></table></div></section>
+        <section id="event-panel" class="event-panel panel"><div class="panel-heading"><h2>⌁ Event log</h2><span>internal · send · receive</span><button id="event-log-toggle" class="collapse-button" type="button" aria-expanded="true" aria-controls="event-log-content">Collapse</button></div><div id="event-log-content" class="event-log-content"><div class="table-wrap"><table><thead><tr><th>Process</th><th>Event</th><th>Description</th><th>Vector timestamp</th><th>Time</th></tr></thead><tbody id="event-log-table"><tr><td colspan="5" class="empty">Waiting for events...</td></tr></tbody></table></div></div></section>
 
         <section class="bottom-grid">
           <article class="panel"><div class="panel-heading"><h2>◈ Chandy-Lamport snapshot</h2><span>process state at cut</span></div><p id="concurrency-detail" class="snapshot-detail">No concurrent pair detected yet.</p><div class="table-wrap"><table><thead><tr><th>Process</th><th>State</th><th>VC</th><th>Cut</th></tr></thead><tbody id="snapshot-table"><tr><td colspan="4" class="empty">Run a snapshot to record global state.</td></tr></tbody></table></div></article>
