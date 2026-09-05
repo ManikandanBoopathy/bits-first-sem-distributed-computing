@@ -111,6 +111,58 @@ def main():
         json.dump(global_snapshot, f, indent=2)
     print("\n[ok] wrote global_snapshot.json")
 
+    scenario_b()
+
+
+def scenario_b():
+    """Snapshot taken WHILE messages are still in transit.
+
+    Requires the processes to be started with CHANNEL_DELAY_MS set (e.g. 2000),
+    otherwise messages are delivered too fast to ever be caught in a channel.
+    """
+    print("\n\n=== Scenario B: snapshot with messages IN TRANSIT ===")
+    for p in channels.PROCESSES:
+        requests.post(url(p, "/snapshot/reset"), timeout=5)
+    print("[ok] snapshot state reset on all 4 processes")
+
+    requests.post(url("restaurant1", "/trigger/place_order"),
+                  json={"order_id": "order-C"}, timeout=5)
+    requests.post(url("restaurant2", "/trigger/place_order"),
+                  json={"order_id": "order-D"}, timeout=5)
+    print("[ok] order-C and order-D placed; messages now in transit")
+
+    time.sleep(0.3)   # short enough that transit is still in progress
+    r = requests.post(url("hub", "/snapshot/start"), timeout=5).json()
+    print(f"[ok] hub initiated snapshot {r['snapshot_id']} mid-flight")
+
+    time.sleep(12)    # let all markers finish propagating
+
+    captured = {}
+    total_in_channels = 0
+    for p in channels.PROCESSES:
+        s = get_snapshot_state(p)
+        captured[p] = s
+        nonempty = {k: v for k, v in s["channel_states"].items() if v}
+        total_in_channels += sum(len(v) for v in s["channel_states"].values())
+        print(f"\n--- snapshot @ {p} --- complete={s['complete']}")
+        print("  local_state:", s["local_state"])
+        print("  channel_states (non-empty only):", nonempty or "{}")
+
+    print(f"\n>>> messages captured in transit: {total_in_channels}")
+    if total_in_channels == 0:
+        print(">>> WARNING: channels empty. Start processes with CHANNEL_DELAY_MS=2000.")
+    else:
+        print(">>> Channel state is non-empty — this is the evidence the")
+        print(">>> assignment asks for: state of each process AND channel.")
+
+    with open("global_snapshot_in_transit.json", "w") as f:
+        json.dump(captured, f, indent=2)
+    print("[ok] wrote global_snapshot_in_transit.json")
+
 
 if __name__ == "__main__":
-    main()
+    if "--scenario-b" in sys.argv:
+        wait_for_health()
+        scenario_b()
+    else:
+        main()

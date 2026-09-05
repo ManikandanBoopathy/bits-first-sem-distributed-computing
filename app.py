@@ -6,7 +6,9 @@ PROCESS_NAME environment variable (restaurant1 | restaurant2 | delivery1 | hub).
 All four roles share this exact same code, per the project constitution.
 """
 import os
+import copy
 import time
+import queue
 import threading
 from functools import wraps
 
@@ -19,6 +21,10 @@ from common import channels
 PROCESS_NAME = os.environ.get("PROCESS_NAME", "hub")
 USE_DOCKER = os.environ.get("USE_DOCKER", "false").lower() == "true"
 PORT = int(os.environ.get("PORT", 5000))
+# Artificial per-channel transit delay. Without this, messages are delivered
+# faster than a snapshot can ever observe them, so every recorded channel
+# state is trivially empty and the algorithm demonstrates nothing.
+CHANNEL_DELAY_MS = int(os.environ.get("CHANNEL_DELAY_MS", 0))
 
 if PROCESS_NAME not in channels.PROCESSES:
     raise SystemExit(f"Unknown PROCESS_NAME={PROCESS_NAME!r}")
@@ -30,10 +36,15 @@ vc = VectorClock(PROCESS_NAME, channels.PROCESSES)
 state_lock = threading.Lock()
 state = {"orders": {}, "log": []}
 
-send_lock = threading.Lock()  # serializes outbound sends -> enforces FIFO per channel
+# One outbound FIFO queue + one worker thread per OUTGOING channel.
+# Application messages AND snapshot markers both traverse this queue, which is
+# what actually enforces the FIFO property Chandy-Lamport depends on.
+_out_queues = {c["id"]: queue.Queue() for c in channels.outgoing(PROCESS_NAME)}
+_enqueue_locks = {c["id"]: threading.Lock() for c in channels.outgoing(PROCESS_NAME)}
 
 snap_lock = threading.Lock()
 snapshot = {
+    "snapshot_id": None,
     "recording": False,
     "complete": False,
     "local_state": None,
@@ -53,6 +64,34 @@ def require_auth(f):
         expected = channels.AUTH_TOKENS.get(sender)
         if not sender or not token or token != expected:
             return jsonify({"error": "unauthorized"}), 401
+        return f(*args, **kwargs)
+    return wrapper
+
+
+def require_declared_channel(f):
+    """FR-009: reject anything not arriving on a declared sender->me channel.
+
+    Runs BEFORE any vector-clock merge or state mutation, so a rejected message
+    leaves the receiver completely untouched.
+    """
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        sender = request.headers.get("X-Process-Name")
+        body = request.get_json(force=True, silent=True) or {}
+        claimed = body.get("channel_id")
+        try:
+            chan = channels.channel_to(sender, PROCESS_NAME)
+        except ValueError:
+            return jsonify({
+                "error": "undeclared_channel",
+                "detail": f"no channel {sender} -> {PROCESS_NAME}",
+            }), 403
+        if claimed != chan["id"]:
+            return jsonify({
+                "error": "channel_id_mismatch",
+                "expected": chan["id"],
+                "got": claimed,
+            }), 403
         return f(*args, **kwargs)
     return wrapper
 
@@ -80,10 +119,28 @@ def log_event(kind, detail, vc_snapshot):
 # --------------------------------------------------------------------------- #
 # Messaging
 # --------------------------------------------------------------------------- #
+def _channel_worker(chan):
+    """Drains one outgoing channel's queue strictly in enqueue order."""
+    q = _out_queues[chan["id"]]
+    dst_base = channels.base_url(chan["dst"], USE_DOCKER)
+    while True:
+        kind, body = q.get()
+        if CHANNEL_DELAY_MS:
+            time.sleep(CHANNEL_DELAY_MS / 1000.0)   # simulated transit time
+        path = "/message" if kind == "app" else "/snapshot/marker"
+        try:
+            requests.post(dst_base + path, json=body, headers=auth_headers(), timeout=10)
+        except requests.RequestException as e:
+            log_event(f"{kind}-send-error", {"channel": chan["id"], "error": str(e)}, vc.snapshot())
+        finally:
+            q.task_done()
+
+
 def send_message(dst, msg_type, payload):
-    """Send event: increments own vector clock, then POSTs to dst's /message."""
+    """Send event: increments own vector clock, then enqueues on the channel."""
     chan = channels.channel_to(PROCESS_NAME, dst)
-    with send_lock:  # serialize per-process sends -> guarantees FIFO per channel
+    # tick + enqueue must be atomic so vector timestamps and wire order agree
+    with _enqueue_locks[chan["id"]]:
         vc_snapshot = vc.tick()
         msg = {
             "channel_id": chan["id"],
@@ -93,19 +150,15 @@ def send_message(dst, msg_type, payload):
             "vc": vc_snapshot,
         }
         log_event("send", {"channel": chan["id"], "type": msg_type, "payload": payload}, vc_snapshot)
-        url = channels.base_url(dst, USE_DOCKER) + "/message"
-        try:
-            requests.post(url, json=msg, headers=auth_headers(), timeout=5)
-        except requests.RequestException as e:
-            log_event("send-error", {"channel": chan["id"], "error": str(e)}, vc_snapshot)
+        _out_queues[chan["id"]].put(("app", msg))
 
 
-def send_marker(chan):
-    url = channels.base_url(chan["dst"], USE_DOCKER) + "/snapshot/marker"
-    try:
-        requests.post(url, json={"channel_id": chan["id"]}, headers=auth_headers(), timeout=5)
-    except requests.RequestException as e:
-        log_event("marker-send-error", {"channel": chan["id"], "error": str(e)}, vc.snapshot())
+def send_marker(chan, snapshot_id):
+    """Markers ride the SAME per-channel FIFO queue as application messages."""
+    with _enqueue_locks[chan["id"]]:
+        _out_queues[chan["id"]].put(
+            ("marker", {"channel_id": chan["id"], "snapshot_id": snapshot_id})
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -145,9 +198,13 @@ def handle_message(msg):
 # --------------------------------------------------------------------------- #
 # Chandy-Lamport snapshot engine (generic — identical for every process)
 # --------------------------------------------------------------------------- #
-def _begin_recording():
+def _begin_recording(snapshot_id):
     with state_lock:
-        orders_copy = dict(state["orders"])
+        # Deep copy, not dict(): a shallow copy shares the inner per-order
+        # dicts with live state, so post-snapshot writes silently mutate the
+        # "recorded" state and the snapshot is never actually frozen.
+        orders_copy = copy.deepcopy(state["orders"])
+    snapshot["snapshot_id"] = snapshot_id
     snapshot["local_state"] = {"vc": vc.snapshot(), "orders": orders_copy}
     snapshot["channel_states"] = {c["id"]: [] for c in channels.incoming(PROCESS_NAME)}
     snapshot["markers_received"] = set()
@@ -156,31 +213,43 @@ def _begin_recording():
 
 
 def initiate_snapshot():
+    snapshot_id = f"snap-{PROCESS_NAME}-{int(time.time()*1000)}"
     with snap_lock:
         if snapshot["recording"]:
-            return False
-        _begin_recording()
+            return None
+        _begin_recording(snapshot_id)
     for c in channels.outgoing(PROCESS_NAME):
-        send_marker(c)
+        send_marker(c, snapshot_id)
     _check_complete()
-    return True
+    return snapshot_id
 
 
-def receive_marker(channel_id):
+def receive_marker(channel_id, snapshot_id):
     first = False
     with snap_lock:
         if not snapshot["recording"]:
             first = True
-            _begin_recording()
+            _begin_recording(snapshot_id)
             # Per Chandy-Lamport: the channel the marker arrived on records EMPTY.
             snapshot["channel_states"][channel_id] = []
-            snapshot["markers_received"].add(channel_id)
-        else:
-            snapshot["markers_received"].add(channel_id)
+        snapshot["markers_received"].add(channel_id)
     if first:
         for c in channels.outgoing(PROCESS_NAME):
-            send_marker(c)
+            send_marker(c, snapshot_id)
     _check_complete()
+
+
+def reset_snapshot():
+    """Clear recording state so a second snapshot can be demonstrated."""
+    with snap_lock:
+        snapshot.update({
+            "snapshot_id": None,
+            "recording": False,
+            "complete": False,
+            "local_state": None,
+            "channel_states": {},
+            "markers_received": set(),
+        })
 
 
 def on_receive_message(msg):
@@ -216,11 +285,13 @@ def get_state():
             "vector_clock": vc.snapshot(),
             "orders": state["orders"],
             "log": state["log"],
+            "outbound_in_flight": {cid: q.qsize() for cid, q in _out_queues.items()},
         })
 
 
 @app.post("/message")
 @require_auth
+@require_declared_channel
 def receive_message():
     msg = request.get_json(force=True)
     on_receive_message(msg)              # snapshot bookkeeping first
@@ -270,15 +341,26 @@ def trigger_deliver():
 
 @app.post("/snapshot/start")
 def start_snapshot():
-    started = initiate_snapshot()
-    return jsonify({"started": started, "process": PROCESS_NAME})
+    snapshot_id = initiate_snapshot()
+    return jsonify({
+        "started": snapshot_id is not None,
+        "snapshot_id": snapshot_id,
+        "process": PROCESS_NAME,
+    })
+
+
+@app.post("/snapshot/reset")
+def reset_snapshot_endpoint():
+    reset_snapshot()
+    return jsonify({"status": "reset", "process": PROCESS_NAME})
 
 
 @app.post("/snapshot/marker")
 @require_auth
+@require_declared_channel
 def marker():
     body = request.get_json(force=True)
-    receive_marker(body["channel_id"])
+    receive_marker(body["channel_id"], body.get("snapshot_id"))
     return jsonify({"status": "marker-processed"})
 
 
@@ -287,6 +369,7 @@ def snapshot_state():
     with snap_lock:
         return jsonify({
             "process": PROCESS_NAME,
+            "snapshot_id": snapshot["snapshot_id"],
             "recording": snapshot["recording"],
             "complete": snapshot["complete"],
             "local_state": snapshot["local_state"],
@@ -302,6 +385,14 @@ def compare_endpoint():
     a = json.loads(request.args["a"])
     b = json.loads(request.args["b"])
     return jsonify({"result": compare(a, b)})
+
+
+def start_channel_workers():
+    for c in channels.outgoing(PROCESS_NAME):
+        threading.Thread(target=_channel_worker, args=(c,), daemon=True).start()
+
+
+start_channel_workers()
 
 
 if __name__ == "__main__":
