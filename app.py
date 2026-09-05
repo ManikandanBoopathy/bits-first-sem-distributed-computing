@@ -8,6 +8,7 @@ All four roles share this exact same code, per the project constitution.
 import os
 import copy
 import time
+import queue
 import threading
 from functools import wraps
 
@@ -20,6 +21,10 @@ from common import channels
 PROCESS_NAME = os.environ.get("PROCESS_NAME", "hub")
 USE_DOCKER = os.environ.get("USE_DOCKER", "false").lower() == "true"
 PORT = int(os.environ.get("PORT", 5000))
+# Artificial per-channel transit delay. Without this, messages are delivered
+# faster than a snapshot can ever observe them, so every recorded channel
+# state is trivially empty and the algorithm demonstrates nothing.
+CHANNEL_DELAY_MS = int(os.environ.get("CHANNEL_DELAY_MS", 0))
 
 if PROCESS_NAME not in channels.PROCESSES:
     raise SystemExit(f"Unknown PROCESS_NAME={PROCESS_NAME!r}")
@@ -31,7 +36,11 @@ vc = VectorClock(PROCESS_NAME, channels.PROCESSES)
 state_lock = threading.Lock()
 state = {"orders": {}, "log": []}
 
-send_lock = threading.Lock()  # serializes outbound sends -> enforces FIFO per channel
+# One outbound FIFO queue + one worker thread per OUTGOING channel.
+# Application messages AND snapshot markers both traverse this queue, which is
+# what actually enforces the FIFO property Chandy-Lamport depends on.
+_out_queues = {c["id"]: queue.Queue() for c in channels.outgoing(PROCESS_NAME)}
+_enqueue_locks = {c["id"]: threading.Lock() for c in channels.outgoing(PROCESS_NAME)}
 
 snap_lock = threading.Lock()
 snapshot = {
@@ -81,10 +90,28 @@ def log_event(kind, detail, vc_snapshot):
 # --------------------------------------------------------------------------- #
 # Messaging
 # --------------------------------------------------------------------------- #
+def _channel_worker(chan):
+    """Drains one outgoing channel's queue strictly in enqueue order."""
+    q = _out_queues[chan["id"]]
+    dst_base = channels.base_url(chan["dst"], USE_DOCKER)
+    while True:
+        kind, body = q.get()
+        if CHANNEL_DELAY_MS:
+            time.sleep(CHANNEL_DELAY_MS / 1000.0)   # simulated transit time
+        path = "/message" if kind == "app" else "/snapshot/marker"
+        try:
+            requests.post(dst_base + path, json=body, headers=auth_headers(), timeout=10)
+        except requests.RequestException as e:
+            log_event(f"{kind}-send-error", {"channel": chan["id"], "error": str(e)}, vc.snapshot())
+        finally:
+            q.task_done()
+
+
 def send_message(dst, msg_type, payload):
-    """Send event: increments own vector clock, then POSTs to dst's /message."""
+    """Send event: increments own vector clock, then enqueues on the channel."""
     chan = channels.channel_to(PROCESS_NAME, dst)
-    with send_lock:  # serialize per-process sends -> guarantees FIFO per channel
+    # tick + enqueue must be atomic so vector timestamps and wire order agree
+    with _enqueue_locks[chan["id"]]:
         vc_snapshot = vc.tick()
         msg = {
             "channel_id": chan["id"],
@@ -94,19 +121,13 @@ def send_message(dst, msg_type, payload):
             "vc": vc_snapshot,
         }
         log_event("send", {"channel": chan["id"], "type": msg_type, "payload": payload}, vc_snapshot)
-        url = channels.base_url(dst, USE_DOCKER) + "/message"
-        try:
-            requests.post(url, json=msg, headers=auth_headers(), timeout=5)
-        except requests.RequestException as e:
-            log_event("send-error", {"channel": chan["id"], "error": str(e)}, vc_snapshot)
+        _out_queues[chan["id"]].put(("app", msg))
 
 
 def send_marker(chan):
-    url = channels.base_url(chan["dst"], USE_DOCKER) + "/snapshot/marker"
-    try:
-        requests.post(url, json={"channel_id": chan["id"]}, headers=auth_headers(), timeout=5)
-    except requests.RequestException as e:
-        log_event("marker-send-error", {"channel": chan["id"], "error": str(e)}, vc.snapshot())
+    """Markers ride the SAME per-channel FIFO queue as application messages."""
+    with _enqueue_locks[chan["id"]]:
+        _out_queues[chan["id"]].put(("marker", {"channel_id": chan["id"]}))
 
 
 # --------------------------------------------------------------------------- #
@@ -220,6 +241,7 @@ def get_state():
             "vector_clock": vc.snapshot(),
             "orders": state["orders"],
             "log": state["log"],
+            "outbound_in_flight": {cid: q.qsize() for cid, q in _out_queues.items()},
         })
 
 
@@ -306,6 +328,14 @@ def compare_endpoint():
     a = json.loads(request.args["a"])
     b = json.loads(request.args["b"])
     return jsonify({"result": compare(a, b)})
+
+
+def start_channel_workers():
+    for c in channels.outgoing(PROCESS_NAME):
+        threading.Thread(target=_channel_worker, args=(c,), daemon=True).start()
+
+
+start_channel_workers()
 
 
 if __name__ == "__main__":
