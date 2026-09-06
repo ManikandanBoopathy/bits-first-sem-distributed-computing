@@ -3,74 +3,70 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Team 14| Food Delivery Distributed Computing Assignment</title>
+  <title>Food Delivery Distributed System</title>
   <link rel="icon" type="image/png" href="https://res.cloudinary.com/krishnamohan479/image/upload/v1788624435/6335524_ufypph.png">
-    <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css', v='graph-replay-17') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css', v='classroom-simulation-4') }}">
 </head>
 <body>
-  <div class="app-shell">
-    <aside class="sidebar">
-      <div class="brand">
-        <div class="brand-mark"><img src="{{ url_for('static', filename='logo.png') }}" alt="Team 14 logo"></div>
-        <div><strong>TEAM 14</strong><span>DISTRIBUTED COMPUTING ASSIGNMENT 1</span></div>
+  <main class="classroom-shell">
+    <header class="hero-header">
+      <div class="brand-lockup">
+        <img src="{{ url_for('static', filename='logo.png') }}" alt="Food Delivery logo">
+        <div><h1>Food Delivery Distributed System</h1><p>Vector Clocks <b>•</b> Happens-Before <b>•</b> Chandy-Lamport Snapshot</p></div>
       </div>
-      <section class="side-section">
-        <h2>Monitor controls</h2>
-        <button id="demo-button" class="demo-button"><span class="dot"></span>Run demo workflow</button>
-        <label class="switch-row"><input id="refresh-toggle" type="checkbox" checked><span class="switch"></span>Auto refresh</label>
-        <label class="range-label" for="refresh-range">Refresh interval <output id="refresh-value">3s</output></label>
-        <input id="refresh-range" type="range" min="1" max="10" value="3">
-      </section>
-      <section class="workflow">
-        <h2>Live workflow</h2>
-        <label for="order-id">New order ID</label>
-        <input id="order-id" placeholder="Auto-generated if blank" autocomplete="off">
-        <label for="restaurant">Restaurant</label>
-        <select id="restaurant"><option value="restaurant1">Restaurant 1</option><option value="restaurant2">Restaurant 2</option></select>
-        <button id="place-order" class="primary">Place order <span>↗</span></button>
-        <button id="snapshot-button" class="secondary">Run Chandy-Lamport snapshot</button>
-        <p id="action-status" class="action-status">Ready for an operation.</p>
-      </section>
-    </aside>
-
-    <main class="main-content">
-      <div class="content-wrap">
-        <div class="page-heading"><div><h1>Food Delivery Command Center</h1></div><div id="health-pill" class="health-pill"><span></span>Checking processes</div></div>
-
-        <section class="stats-grid">
-          <div class="stat"><strong id="process-count">-</strong><span>Processes online</span></div>
-          <div class="stat"><strong id="order-count">-</strong><span>Orders observed</span></div>
-          <div class="stat"><strong id="event-count">-</strong><span>Recent events</span></div>
-          <div class="stat"><strong id="snapshot-status">-</strong><span>Snapshot state</span></div>
-        </section>
-
-        <section class="teaching-panel panel">
-          <div class="teaching-header"><div><p class="teaching-kicker">REPEATABLE TEACHING REPLAY</p><h2>Vector clocks → consistent global state</h2><p>Start from zero, follow causal messages, pause at any event, then capture the Chandy-Lamport cut.</p></div><div class="teaching-controls"><button id="start-demo" class="primary">Start</button><button id="pause-demo" class="secondary" disabled>Pause</button><button id="reset-demo" class="ghost-button">Reset</button></div></div>
-          <div class="lane-legend"><span><i class="legend-dot internal"></i>Internal</span><span><i class="legend-dot message"></i>Message</span><span><i class="legend-dot marker"></i>Snapshot marker</span><span id="demo-clock-label">All clocks [0,0,0,0]</span></div>
-          <div id="teaching-lanes" class="teaching-lanes">
-            <div class="teaching-lane" data-process="hub"><div class="lane-label"><img src="{{ url_for('static', filename='hub.png') }}" alt="Hub"><span>Hub</span></div><div class="lane-track" id="lane-hub"></div></div>
-            <div class="teaching-lane" data-process="restaurant1"><div class="lane-label"><img src="{{ url_for('static', filename='re1.png') }}" alt="Restaurant 1"><span>Restaurant 1</span></div><div class="lane-track" id="lane-restaurant1"></div></div>
-            <div class="teaching-lane" data-process="restaurant2"><div class="lane-label"><img src="{{ url_for('static', filename='re2.png') }}" alt="Restaurant 2"><span>Restaurant 2</span></div><div class="lane-track" id="lane-restaurant2"></div></div>
-            <div class="teaching-lane" data-process="delivery1"><div class="lane-label"><img src="{{ url_for('static', filename='bike.png') }}" alt="Delivery 1"><span>Delivery 1</span></div><div class="lane-track" id="lane-delivery1"></div></div>
-            <div id="snapshot-cut" class="snapshot-cut"><span>Chandy-Lamport cut</span></div>
-          </div>
-          <div id="teaching-note" class="teaching-note">Press Start to replay the same causal sequence from [0,0,0,0].</div>
-        </section>
-
-        <section class="top-grid">
-          <article class="panel topology-panel"><div class="panel-heading"><h2>⌁ System topology</h2><span id="last-updated">Waiting for data</span></div><div id="topology" class="topology"><div class="node hub"><img src="{{ url_for('static', filename='hub.png') }}" alt="Hub logo"><small><i class="status-dot"></i>PORT 5000</small></div><div class="node restaurant-one"><img src="{{ url_for('static', filename='re1.png') }}" alt="Restaurant 1 logo"><small><i class="status-dot"></i>PORT 5001</small></div><div class="node restaurant-two"><img src="{{ url_for('static', filename='re2.png') }}" alt="Restaurant 2 logo"><small><i class="status-dot"></i>PORT 5002</small></div><div class="node delivery"><img src="{{ url_for('static', filename='bike.png') }}" alt="Delivery partner"><small><i class="status-dot"></i>PORT 5003</small></div><i class="line line-one"></i><i class="line line-two"></i><i class="line line-three"></i><i class="line line-four"></i></div></article>
-          <article class="panel clock-panel"><div class="panel-heading"><h2>◷ Vector clocks</h2><span>latest local snapshots</span></div><div class="table-wrap"><table><thead><tr><th>Process</th><th>HU</th><th>RE</th><th>RE</th><th>DE</th></tr></thead><tbody id="clock-table"><tr><td colspan="5" class="empty">No process data yet</td></tr></tbody></table></div><p id="event-summary" class="evidence-summary">Event evidence: internal 0 · send 0 · receive 0</p></article>
-        </section>
-
-        <section id="event-panel" class="event-panel panel"><div class="panel-heading"><h2>⌁ Event log</h2><span>internal · send · receive</span><button id="event-log-toggle" class="collapse-button" type="button" aria-expanded="true" aria-controls="event-log-content">Collapse</button></div><div id="event-log-content" class="event-log-content"><div class="table-wrap"><table><thead><tr><th>Process</th><th>Event</th><th>Description</th><th>Vector timestamp</th><th>Time</th></tr></thead><tbody id="event-log-table"><tr><td colspan="5" class="empty">Waiting for events...</td></tr></tbody></table></div></div></section>
-
-        <section class="bottom-grid">
-          <article class="panel"><div class="panel-heading"><h2>◈ Chandy-Lamport snapshot</h2><span>process state at cut</span></div><p id="concurrency-detail" class="snapshot-detail">No concurrent pair detected yet.</p><div class="table-wrap"><table><thead><tr><th>Process</th><th>State</th><th>VC</th><th>Cut</th></tr></thead><tbody id="snapshot-table"><tr><td colspan="4" class="empty">Run a snapshot to record global state.</td></tr></tbody></table></div></article>
-          <article class="panel"><div class="panel-heading"><h2>↗ Global snapshot / channels</h2><span id="channel-count">0 channels</span></div><p id="snapshot-detail" class="snapshot-detail">Chandy-Lamport is idle.</p><div id="channel-list" class="channel-list"><p class="empty">No snapshot recorded yet.</p></div></article>
-        </section>
+      <div class="control-cluster" aria-label="Simulation controls">
+        <button id="start-demo" class="button button-start" type="button">▶ <span>Start</span></button>
+        <button id="pause-demo" class="button button-pause" type="button" disabled>Ⅱ <span>Pause</span></button>
+        <button id="reset-demo" class="button button-reset" type="button">↻ <span>Restart</span></button>
+        <button id="snapshot-button" class="button button-snapshot" type="button" disabled>◉ <span>Capture Global Snapshot</span><small>Chandy-Lamport</small></button>
       </div>
-    </main>
+    </header>
+
+    <section class="status-strip" aria-label="Simulation status">
+      <span>Processes: <strong id="process-count">4/4</strong></span>
+      <span>Events: <strong id="event-progress">0/0</strong></span>
+      <span>Snapshot: <strong id="snapshot-status">Not Taken</strong></span>
+      <span class="status-step">Current Step: <strong id="current-step">Waiting for START</strong></span>
+    </section>
+
+    <section class="simulation-card" aria-label="Distributed process simulation">
+      <div class="simulation-heading">
+        <div><p class="eyebrow">LIVE EVENT TIMELINE</p><h2>Four processes, one story</h2></div>
+        <p id="simulation-message">Press START to initialize each process with its first local event.</p>
+      </div>
+      <div id="timeline" class="timeline">
+        <svg id="message-layer" class="message-layer" aria-hidden="true"><defs><linearGradient id="normal-message-gradient" x1="0" x2="1"><stop offset="0" stop-color="#7aa7ff"></stop><stop offset="1" stop-color="#2dd4bf"></stop></linearGradient><linearGradient id="marker-message-gradient" x1="0" x2="1"><stop offset="0" stop-color="#ff6b9d"></stop><stop offset="1" stop-color="#f8c15d"></stop></linearGradient></defs></svg>
+        <div class="snapshot-boundary" id="snapshot-boundary"><span>Snapshot point</span></div>
+        <div class="process-lane" data-process="hub"><div class="process-label"><span class="process-badge p1">P1</span><div><strong>Hub</strong><small>[0,0,0,0]</small></div></div><div class="lane-track" id="lane-hub"></div></div>
+        <div class="process-lane" data-process="restaurant1"><div class="process-label"><span class="process-badge p2">P2</span><div><strong>Restaurant 1</strong><small>[0,0,0,0]</small></div></div><div class="lane-track" id="lane-restaurant1"></div></div>
+        <div class="process-lane" data-process="restaurant2"><div class="process-label"><span class="process-badge p3">P3</span><div><strong>Restaurant 2</strong><small>[0,0,0,0]</small></div></div><div class="lane-track" id="lane-restaurant2"></div></div>
+        <div class="process-lane" data-process="delivery1"><div class="process-label"><span class="process-badge p4">P4</span><div><strong>Delivery</strong><small>[0,0,0,0]</small></div></div><div class="lane-track" id="lane-delivery1"></div></div>
+      </div>
+      <div class="timeline-legend"><span><i class="legend-event"></i>Process event</span><span><i class="legend-message"></i>Application message</span><span><i class="legend-marker"></i>Snapshot marker</span><span class="clock-help">Each receive uses MAX + increment</span></div>
+    </section>
+
+    <section id="snapshot-stage" class="snapshot-stage" aria-live="polite">
+      <div class="snapshot-intro"><p class="eyebrow">GLOBAL STATE</p><h2>Chandy-Lamport capture</h2><p id="snapshot-instruction">The simulation will pause at a meaningful point so the class can inspect the cut before capturing it.</p></div>
+      <div id="snapshot-results" class="snapshot-results" hidden>
+        <div class="result-summary"><div><span>Snapshot status</span><strong id="result-status">WAITING</strong></div><div><span>Processes recorded</span><strong id="processes-recorded">0/4</strong></div><div><span>Channels recorded</span><strong id="channels-recorded">0/6</strong></div><div><span>Messages in transit</span><strong id="messages-transit">0</strong></div></div>
+        <div class="result-grid">
+          <article class="result-panel"><h3>Process states</h3><div class="table-wrap"><table><thead><tr><th>Process</th><th>Vector clock</th><th>Process state</th><th>Status</th></tr></thead><tbody id="process-state-table"><tr><td colspan="4" class="empty">Capture the global state to record process states.</td></tr></tbody></table></div></article>
+          <article class="result-panel"><h3>Channel states</h3><div class="table-wrap"><table><thead><tr><th>Channel</th><th>Direction</th><th>Messages in transit</th><th>Status</th></tr></thead><tbody id="channel-state-table"><tr><td colspan="4" class="empty">Channel recording will appear here.</td></tr></tbody></table></div></article>
+        </div>
+        <div id="consistency-result" class="consistency-result"><strong>Snapshot not captured</strong><span>Process and channel states will be checked after marker propagation.</span></div>
+      </div>
+    </section>
+  </main>
+  <div id="snapshot-modal" class="snapshot-modal" hidden role="dialog" aria-modal="true" aria-labelledby="snapshot-modal-title">
+    <div class="snapshot-backdrop"></div>
+    <section class="snapshot-dialog">
+      <p class="eyebrow">CHANDY-LAMPORT</p>
+      <h2 id="snapshot-modal-title">Capturing global state</h2>
+      <div class="modal-countdown-ring"><strong id="countdown-value">5</strong></div>
+      <p>Taking a global snapshot<br><small>at this instance...</small></p>
+      <span class="modal-status">The system is frozen while the snapshot boundary is established.</span>
+    </section>
   </div>
-  <script src="{{ url_for('static', filename='dashboard.js', v='graph-replay-17') }}"></script>
+  <script src="{{ url_for('static', filename='dashboard.js', v='classroom-simulation-3') }}"></script>
 </body>
 </html>

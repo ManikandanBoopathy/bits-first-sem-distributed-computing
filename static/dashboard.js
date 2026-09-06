@@ -1,276 +1,151 @@
-const refreshToggle = document.querySelector('#refresh-toggle');
-const refreshRange = document.querySelector('#refresh-range');
-const refreshValue = document.querySelector('#refresh-value');
-const actionStatus = document.querySelector('#action-status');
-let refreshTimer;
+const processes = ['hub', 'restaurant1', 'restaurant2', 'delivery1'];
+const labels = { hub: 'Hub', restaurant1: 'Restaurant 1', restaurant2: 'Restaurant 2', delivery1: 'Delivery' };
+const processIds = { hub: 'P1', restaurant1: 'P2', restaurant2: 'P3', delivery1: 'P4' };
+const incomingChannels = { r1_hub: 'restaurant1 -> hub', r2_hub: 'restaurant2 -> hub', hub_r1: 'hub -> restaurant1', hub_r2: 'hub -> restaurant2', hub_d1: 'hub -> delivery1', d1_hub: 'delivery1 -> hub' };
+const state = { clocks: {}, events: [], eventIndex: 0, running: false, paused: false, snapshotPoint: false, countdown: null, countdownValue: 5, timers: new Set(), currentMarker: null, generation: 0, establishedChannels: new Set() };
 
-const labels = {
-  restaurant1: 'Restaurant 1', restaurant2: 'Restaurant 2', delivery1: 'Delivery 1', hub: 'Hub'
-};
+function emptyClock() { return Object.fromEntries(processes.map((process) => [process, 0])); }
+function emptyClocks() { return Object.fromEntries(processes.map((process) => [process, emptyClock()])); }
+function clockArray(clock) { return `[${processes.map((process) => clock[process] ?? 0).join(',')}]`; }
+function escapeHtml(value) { return String(value).replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#039;', '"': '&quot;' }[character])); }
+function schedule(callback, delay) {
+  const timer = { callback, remaining: delay, due: Date.now() + delay, id: null, paused: false };
+  const arm = () => { timer.due = Date.now() + timer.remaining; timer.id = window.setTimeout(() => { state.timers.delete(timer); callback(); }, timer.remaining); };
+  timer.arm = arm; arm(); state.timers.add(timer); return timer;
+}
+function clearTimers() { state.timers.forEach((timer) => window.clearTimeout(timer.id)); state.timers.clear(); }
+function pauseTimers() { state.timers.forEach((timer) => { if (!timer.paused) { window.clearTimeout(timer.id); timer.remaining = Math.max(0, timer.due - Date.now()); timer.paused = true; } }); }
+function resumeTimers() { state.timers.forEach((timer) => { if (timer.paused) { timer.paused = false; timer.arm(); } }); }
 
-function escapeHtml(value) {
-  return String(value).replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#039;', '"': '&quot;' }[character]));
+function makeEvents() {
+  return [
+    { process: 'hub', kind: 'internal', label: 'Creates Order #101', note: 'Hub creates Order #101 locally.' },
+    { process: 'restaurant1', kind: 'internal', label: 'Restaurant 1 Ready', note: 'Restaurant 1 is ready to receive an order.' },
+    { process: 'restaurant2', kind: 'internal', label: 'Restaurant 2 Ready', note: 'Restaurant 2 is ready to receive an order.' },
+    { process: 'delivery1', kind: 'internal', label: 'Delivery Service Ready', note: 'Delivery service is ready for an assignment.' },
+    { process: 'hub', kind: 'send', to: 'restaurant1', message: 'Order #101', channel: 'hub_r1', label: 'Sends Order #101', note: 'Hub sends Order #101 to Restaurant 1.' },
+    { process: 'restaurant1', kind: 'receive', from: 'hub', channel: 'hub_r1', label: 'Receives Order #101', note: 'Restaurant 1 receives the Hub message.' },
+    { process: 'restaurant1', kind: 'internal', label: 'Start Preparing Order #101', note: 'Restaurant 1 starts preparing the received order.' },
+    { process: 'hub', kind: 'send', to: 'restaurant2', message: 'Order #102', channel: 'hub_r2', label: 'Sends Order #102', note: 'Hub sends Order #102 to Restaurant 2.' },
+    { process: 'restaurant2', kind: 'receive', from: 'hub', channel: 'hub_r2', label: 'Receives Order #102', note: 'Restaurant 2 receives the Hub message.' },
+    { process: 'restaurant2', kind: 'internal', label: 'Start Preparing Order #102', note: 'Restaurant 2 starts preparing the received order.' },
+    { process: 'hub', kind: 'send', to: 'delivery1', message: 'Assignment #101', channel: 'hub_d1', label: 'Sends to Delivery', note: 'Hub assigns Order #101 to Delivery.' },
+    { process: 'delivery1', kind: 'receive', from: 'hub', channel: 'hub_d1', label: 'Receives Order #101', note: 'Delivery receives the assignment.' },
+    { process: 'hub', kind: 'marker', label: 'SNAPSHOT CUT', note: 'A meaningful cut is selected before the ready confirmations arrive.' },
+    { process: 'restaurant1', kind: 'send', to: 'hub', message: 'Order Ready #101', channel: 'r1_hub', label: 'Sends Order Ready', note: 'Restaurant 1 confirms the order is ready.' },
+    { process: 'hub', kind: 'receive', from: 'restaurant1', channel: 'r1_hub', label: 'Receives Ready #101', note: 'Hub receives Restaurant 1 confirmation.' },
+    { process: 'restaurant2', kind: 'send', to: 'hub', message: 'Order Ready #102', channel: 'r2_hub', label: 'Sends Order Ready', note: 'Restaurant 2 confirms independently.' },
+    { process: 'hub', kind: 'receive', from: 'restaurant2', channel: 'r2_hub', label: 'Receives Ready #102', note: 'Hub receives Restaurant 2 confirmation.' },
+  ];
 }
 
-function clockValues(clock) {
-  return ['hub', 'restaurant1', 'restaurant2', 'delivery1'].map((key) => clock?.[key] ?? 0);
-}
-
-function clockArray(clock) { return `[${clockValues(clock).join(',')}]`; }
-
-function renderTopology(processes) {
-  const byName = Object.fromEntries(processes.map((item) => [item.process, item]));
-  document.querySelectorAll('.node').forEach((node) => {
-    const name = node.classList.contains('hub') ? 'hub' : node.classList.contains('restaurant-one') ? 'restaurant1' : node.classList.contains('restaurant-two') ? 'restaurant2' : 'delivery1';
-    const item = byName[name];
-    const state = item?.status === 'online' ? 'ONLINE' : 'OFFLINE';
-    const statusDot = node.querySelector('.status-dot');
-    if (statusDot) statusDot.classList.toggle('online', state === 'ONLINE');
-    node.classList.toggle('online-node', state === 'ONLINE');
-  });
-}
-
-function renderClocks(processes) {
-  const table = document.querySelector('#clock-table');
-  table.innerHTML = processes.map((item) => `<tr><td>${escapeHtml(labels[item.process] || item.process)}</td>${clockValues(item.vector_clock).map((value) => `<td>${value}</td>`).join('')}</tr>`).join('') || '<tr><td colspan="5" class="empty">No process data yet</td></tr>';
-}
-
-function renderEvents(events) {
-  const table = document.querySelector('#event-log-table');
-  table.innerHTML = events.length ? events.map((event) => {
-    const detail = typeof event.detail === 'object' ? event.detail : { value: event.detail };
-    const description = detail.type ? `${detail.type} · ${detail.from || detail.channel || ''}` : detail.action || detail.value || JSON.stringify(detail);
-    const time = event.wall_time ? new Date(event.wall_time * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '--:--:--';
-    return `<tr class="event-row" data-process="${escapeHtml(event.process)}"><td>${escapeHtml(labels[event.process] || event.process)}</td><td><b class="event-kind">${escapeHtml(event.event)}</b></td><td>${escapeHtml(description)}</td><td class="vector-value">${escapeHtml(clockArray(event.vc))}</td><td>${time}</td></tr>`;
-  }).join('') : '<tr><td colspan="5" class="empty">Waiting for events...</td></tr>';
-}
-
-function renderSnapshotTable(data) {
-  const table = document.querySelector('#snapshot-table');
-  const rows = Object.entries(data.snapshot?.processes || {}).filter(([, snapshot]) => snapshot).map(([process, snapshot]) => {
-    const vectorClock = snapshot.local_state?.vc || {};
-    return `<tr><td>${escapeHtml(labels[process] || process)}</td><td>${escapeHtml(summarizeLocalState(snapshot.local_state))}</td><td>${escapeHtml(clockArray(vectorClock))}</td><td class="${snapshot.complete ? 'online' : 'offline-text'}">${snapshot.complete ? 'COMPLETE' : 'OPEN'}</td></tr>`;
-  });
-  table.innerHTML = rows.length ? rows.join('') : '<tr><td colspan="4" class="empty">Run a snapshot to record global state.</td></tr>';
-}
-
-function summarizeLocalState(localState) {
-  const orders = localState?.orders || {};
-  const orderIds = Object.keys(orders);
-  if (!orderIds.length) return 'No active orders';
-  const statuses = orderIds.reduce((counts, orderId) => {
-    const status = orders[orderId]?.status || 'unknown';
-    counts[status] = (counts[status] || 0) + 1;
-    return counts;
-  }, {});
-  return `${orderIds.length} order${orderIds.length === 1 ? '' : 's'} · ${Object.entries(statuses).map(([status, count]) => `${count} ${status}`).join(', ')}`;
-}
-
-function renderChannels(data) {
-  const list = document.querySelector('#channel-list');
-  const snapshots = data.snapshot?.processes || {};
-  const processStates = Object.entries(snapshots).filter(([, snapshot]) => snapshot).map(([process, snapshot]) => ({
-    channel: `${labels[process] || process} local state`,
-    type: summarizeLocalState(snapshot.local_state),
-  }));
-  const messages = Object.entries(snapshots).flatMap(([process, snapshot]) => Object.entries(snapshot?.channel_states || {}).flatMap(([channel, items]) => items.map((item) => ({ channel: `${channel} -> ${process}`, type: item.type }))));
-  document.querySelector('#channel-count').textContent = `${data.channels.length} channels`;
-  const rows = [...processStates, ...messages];
-  list.innerHTML = rows.length ? rows.map((item) => `<div class="channel-row"><span><b>${escapeHtml(item.channel)}</b><br><small>${escapeHtml(item.type)}</small></span><span class="online">RECORDED</span></div>`).join('') : '<p class="empty">No snapshot recorded yet.</p>';
-}
-
-async function loadDashboard() {
-  try {
-    const response = await fetch('/api/dashboard', { cache: 'no-store' });
-    if (!response.ok) throw new Error(`Dashboard returned ${response.status}`);
-    const data = await response.json();
-    const online = data.processes.filter((item) => item.status === 'online').length;
-    document.querySelector('#process-count').textContent = `${online}/4`;
-    document.querySelector('#order-count').textContent = Object.keys(data.orders).length;
-    document.querySelector('#event-count').textContent = data.events.length;
-    document.querySelector('#snapshot-status').textContent = data.snapshot?.complete ? 'READY' : data.snapshot?.recording ? 'CAPTURING' : 'IDLE';
-    const snapshotProcesses = Object.values(data.snapshot?.processes || {});
-    const completeCount = snapshotProcesses.filter((snapshot) => snapshot?.complete).length;
-    const channelMessageCount = snapshotProcesses.flatMap((snapshot) => Object.values(snapshot?.channel_states || {}).flat()).length;
-    document.querySelector('#snapshot-detail').textContent = data.snapshot?.complete ? `Consistent cut · ${completeCount}/4 processes · ${channelMessageCount} in-transit messages` : `Chandy-Lamport recording · ${completeCount}/4 processes complete`;
-    document.querySelector('#concurrency-detail').textContent = data.concurrency ? `Concurrent events detected: ${data.concurrency.first.process} || ${data.concurrency.second.process}` : 'No concurrent pair detected yet.';
-    const eventCounts = data.events.reduce((counts, event) => { counts[event.event] = (counts[event.event] || 0) + 1; return counts; }, {});
-    document.querySelector('#event-summary').textContent = `Event evidence: internal ${eventCounts.internal || 0} · send ${eventCounts.send || 0} · receive ${eventCounts.receive || 0}`;
-    const health = document.querySelector('#health-pill');
-    health.classList.toggle('offline', online !== 4);
-    health.innerHTML = `<span></span>${online}/4 PROCESSES ${online === 4 ? 'HEALTHY' : 'AVAILABLE'}`;
-    document.querySelector('#last-updated').textContent = `updated ${new Date().toLocaleTimeString()}`;
-    renderTopology(data.processes); renderClocks(data.processes); renderEvents(data.events); renderSnapshotTable(data); renderChannels(data);
-  } catch (error) {
-    document.querySelector('#health-pill').classList.add('offline');
-    document.querySelector('#health-pill').innerHTML = '<span></span>BACKEND UNAVAILABLE';
-    actionStatus.textContent = error.message;
-  }
-}
-
-async function postAction(url, payload) {
-  actionStatus.textContent = 'Sending operation...';
-  try {
-    const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error || 'Operation failed');
-    actionStatus.textContent = 'Operation accepted.';
-    await loadDashboard();
-  } catch (error) { actionStatus.textContent = error.message; }
-}
-
-function pulseOrderChannel(restaurant) {
-  const topology = document.querySelector('#topology');
-  topology.classList.remove('pulse-r1', 'pulse-r2');
-  void topology.offsetWidth;
-  topology.classList.add(restaurant === 'restaurant2' ? 'pulse-r2' : 'pulse-r1');
-  window.setTimeout(() => topology.classList.remove('pulse-r1', 'pulse-r2'), 2600);
-}
-
-function pulseProcessPath(process) {
-  const topology = document.querySelector('#topology');
-  topology.classList.remove('pulse-r1', 'pulse-r2', 'pulse-delivery');
-  void topology.offsetWidth;
-  if (process === 'restaurant1') topology.classList.add('pulse-r1');
-  if (process === 'restaurant2') topology.classList.add('pulse-r2');
-  if (process === 'delivery1') topology.classList.add('pulse-delivery');
-  if (process === 'hub') topology.classList.add('pulse-r1', 'pulse-r2');
-  window.setTimeout(() => topology.classList.remove('pulse-r1', 'pulse-r2', 'pulse-delivery'), 1800);
-}
-
-const teachingSequence = [
-  { process: 'hub', kind: 'internal', label: 'local order', clock: [1, 0, 0, 0], note: 'Hub creates the order-processing event.' },
-  { process: 'restaurant1', kind: 'internal', label: 'place order', clock: [0, 1, 0, 0], note: 'Restaurant 1 creates an order independently.' },
-  { process: 'restaurant2', kind: 'internal', label: 'place order', clock: [0, 0, 1, 0], note: 'Restaurant 2 creates an order independently.' },
-  { process: 'hub', kind: 'message', label: 'order_ready', from: 'hub', to: 'restaurant1', clock: [2, 0, 0, 0], note: 'Hub sends order_ready to Restaurant 1.' },
-  { process: 'restaurant1', kind: 'message', label: 'order_ready', from: 'hub', to: 'restaurant1', clock: [2, 2, 0, 0], note: 'Restaurant 1 merges the Hub clock.' },
-  { process: 'hub', kind: 'message', label: 'order_ready', from: 'hub', to: 'restaurant2', clock: [3, 0, 0, 0], note: 'Hub sends order_ready to Restaurant 2.' },
-  { process: 'restaurant2', kind: 'message', label: 'order_ready', from: 'hub', to: 'restaurant2', clock: [3, 0, 2, 0], note: 'Restaurant 2 merges the Hub clock.' },
-  { process: 'hub', kind: 'message', label: 'assign_delivery', from: 'hub', to: 'delivery1', clock: [4, 0, 0, 0], note: 'Hub assigns the delivery partner.' },
-  { process: 'delivery1', kind: 'message', label: 'assign_delivery', from: 'hub', to: 'delivery1', clock: [4, 0, 0, 1], note: 'Delivery 1 receives the assignment.' },
-  { process: 'restaurant1', kind: 'message', label: 'confirmed', from: 'restaurant1', to: 'hub', clock: [3, 3, 0, 0], note: 'Restaurant 1 confirms the order.' },
-  { process: 'hub', kind: 'message', label: 'confirmed', from: 'restaurant1', to: 'hub', clock: [5, 3, 0, 0], note: 'Hub receives Restaurant 1 confirmation.' },
-  { process: 'restaurant2', kind: 'message', label: 'confirmed', from: 'restaurant2', to: 'hub', clock: [3, 0, 3, 0], note: 'Restaurant 2 confirms concurrently with Restaurant 1.' },
-  { process: 'hub', kind: 'message', label: 'confirmed', from: 'restaurant2', to: 'hub', clock: [6, 3, 3, 0], note: 'Hub receives Restaurant 2 confirmation.' },
-  { process: 'hub', kind: 'marker', label: 'MARKER', clock: [7, 3, 3, 0], note: 'Chandy-Lamport snapshot starts at Hub.' },
-  { process: 'restaurant1', kind: 'marker', label: 'record state', clock: [7, 4, 3, 0], note: 'Restaurant 1 records local state and its channels.' },
-  { process: 'restaurant2', kind: 'marker', label: 'record state', clock: [7, 3, 4, 0], note: 'Restaurant 2 records local state and its channels.' },
-  { process: 'delivery1', kind: 'marker', label: 'record state', clock: [7, 3, 3, 2], note: 'Delivery 1 records local state and its channels.' },
-];
-let teachingTimer = null;
-let teachingIndex = 0;
-let teachingPaused = false;
-
-function formatClock(clock) { return `[${clock.join(',')}]`; }
-
-function resetTeaching() {
-  window.clearTimeout(teachingTimer);
-  teachingIndex = 0;
-  teachingPaused = false;
-  document.querySelector('#teaching-lanes').classList.remove('demo-running', 'demo-paused', 'demo-complete');
-  document.querySelector('#snapshot-cut').classList.remove('visible');
+function resetVisuals() {
+  clearTimers();
+  state.generation += 1; state.clocks = emptyClocks(); state.events = makeEvents(); state.eventIndex = 0; state.running = false; state.paused = false; state.snapshotPoint = false; state.countdown = null; state.countdownValue = 5; state.currentMarker = null; state.establishedChannels = new Set();
   document.querySelectorAll('.lane-track').forEach((track) => { track.innerHTML = ''; });
-  document.querySelector('#demo-clock-label').textContent = 'All clocks [0,0,0,0]';
-  document.querySelector('#teaching-note').textContent = 'Press Start to replay the same causal sequence from [0,0,0,0].';
+  const layer = document.querySelector('#message-layer');
+  layer.querySelectorAll('.message-path').forEach((path) => path.remove());
+  document.querySelector('#snapshot-boundary').classList.remove('visible');
   document.querySelector('#start-demo').disabled = false;
+  document.querySelector('#snapshot-button').disabled = true;
   document.querySelector('#pause-demo').disabled = true;
-  document.querySelector('#pause-demo').textContent = 'Pause';
+  document.querySelector('#simulation-message').textContent = 'Press START to initialize each process with its first local event.';
+  document.querySelector('#snapshot-instruction').textContent = 'The simulation will pause at a meaningful point so the class can inspect the cut before capturing it.';
+  document.querySelector('#snapshot-status').textContent = 'Not Taken';
+  document.querySelector('#current-step').textContent = 'Waiting for START';
+  document.querySelector('#event-progress').textContent = `0/${state.events.length}`;
+  document.querySelector('#snapshot-results').hidden = true;
+  document.querySelector('#snapshot-modal').hidden = true;
+  document.querySelector('#consistency-result').innerHTML = '<strong>Snapshot not captured</strong><span>Process and channel states will be checked after marker propagation.</span>';
+  document.querySelectorAll('.process-label small').forEach((node) => { node.textContent = '[0,0,0,0]'; });
 }
 
-function renderTeachingEvent(event, index) {
+function updateClockLabel(process) { const node = document.querySelector(`[data-process="${process}"] .process-label small`); if (node) node.textContent = clockArray(state.clocks[process]); }
+function tick(process) { state.clocks[process][process] += 1; }
+function receive(process, incoming) { processes.forEach((name) => { state.clocks[process][name] = Math.max(state.clocks[process][name], incoming[name] || 0); }); tick(process); }
+function eventPosition(index) { return 5 + (index / Math.max(1, state.events.length - 1)) * 90; }
+
+function addEventMarker(event, index, clock) {
   const track = document.querySelector(`#lane-${event.process}`);
-  const card = document.createElement('div');
-  card.className = `teaching-event ${event.kind}`;
-  card.style.left = `${8 + (index / (teachingSequence.length - 1)) * 84}%`;
-  card.innerHTML = `<div class="event-card"><b>${event.label}</b><span>${formatClock(event.clock)}</span></div>`;
-  card.title = event.note;
-  track.appendChild(card);
-  card.classList.add('active');
-  window.setTimeout(() => card.classList.remove('active'), 900);
-  document.querySelector('#demo-clock-label').textContent = `${labels[event.process]} current clock ${formatClock(event.clock)}`;
-  document.querySelector('#teaching-note').textContent = `${index + 1}/${teachingSequence.length} · ${event.note}`;
-  if (event.kind === 'message' || event.kind === 'marker') pulseProcessPath(event.process);
-  if (event.kind === 'marker' && index >= 8) document.querySelector('#snapshot-cut').classList.add('visible');
-  if (event.from && event.to && event.from !== event.to) drawTeachingMessage(event, index);
+  if (state.currentMarker) state.currentMarker.classList.remove('current');
+  const marker = document.createElement('div'); marker.className = `event-marker ${event.kind} active ${index % 2 ? 'label-below' : 'label-above'} current`; marker.style.left = `${eventPosition(index)}%`;
+  marker.innerHTML = `<i class="event-dot"></i><div class="event-card"><b>${escapeHtml(event.label)}</b><span>${escapeHtml(clockArray(clock))}</span></div>`;
+  marker.title = event.note; track.appendChild(marker); state.currentMarker = marker; schedule(() => marker.classList.remove('active'), 800);
 }
 
-function drawTeachingMessage(event, index) {
-  const lanes = document.querySelector('#teaching-lanes');
-  const sourceTrack = document.querySelector(`#lane-${event.from}`);
-  const targetTrack = document.querySelector(`#lane-${event.to}`);
-  if (!sourceTrack || !targetTrack) return;
-  const sourceRect = sourceTrack.getBoundingClientRect();
-  const targetRect = targetTrack.getBoundingClientRect();
-  const laneRect = lanes.getBoundingClientRect();
-  const x = sourceRect.left - laneRect.left + sourceRect.width * (8 + (index / (teachingSequence.length - 1)) * 84) / 100;
-  const targetX = targetRect.left - laneRect.left + targetRect.width * (8 + (index / (teachingSequence.length - 1)) * 84) / 100;
-  const y = sourceRect.top - laneRect.top;
-  const targetY = targetRect.top - laneRect.top;
-  const dx = targetX - x;
-  const dy = targetY - y;
-  const beam = document.createElement('i');
-  beam.className = 'teaching-message-flow';
-  beam.style.left = `${x}px`;
-  beam.style.top = `${y}px`;
-  beam.style.width = `${Math.sqrt(dx * dx + dy * dy)}px`;
-  beam.style.transform = `rotate(${Math.atan2(dy, dx) * 180 / Math.PI}deg)`;
-  lanes.appendChild(beam);
-  window.setTimeout(() => beam.remove(), 1700);
+function drawPermanentChannels() {
+  const timeline = document.querySelector('#timeline'); const bounds = timeline.getBoundingClientRect(); const layer = document.querySelector('#message-layer');
+  layer.querySelectorAll('.permanent-channel').forEach((path) => path.remove());
+  const routes = [
+    ['hub', 'restaurant1', 'hub_r1'], ['restaurant1', 'hub', 'r1_hub'], ['hub', 'restaurant2', 'hub_r2'], ['restaurant2', 'hub', 'r2_hub'], ['hub', 'delivery1', 'hub_d1'], ['delivery1', 'hub', 'd1_hub'],
+  ];
+  routes.filter(([, , channel]) => state.establishedChannels.has(channel)).forEach(([from, to, channel]) => {
+    const source = document.querySelector(`#lane-${from}`).getBoundingClientRect(); const target = document.querySelector(`#lane-${to}`).getBoundingClientRect();
+    const x = source.left - bounds.left + source.width * .38; const targetX = target.left - bounds.left + target.width * .68; const y = source.top - bounds.top; const targetY = target.top - bounds.top;
+    const bend = Math.max(34, Math.abs(targetY - y) * .3); const direction = targetY > y ? 1 : -1; const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', `M ${x} ${y} C ${x + bend} ${y + direction * bend}, ${targetX - bend} ${targetY - direction * bend}, ${targetX} ${targetY}`); path.setAttribute('class', 'permanent-channel'); path.setAttribute('data-channel', channel); layer.appendChild(path);
+  });
+  layer.setAttribute('viewBox', `0 0 ${bounds.width} ${bounds.height}`);
 }
 
-function advanceTeaching() {
-  if (teachingPaused || teachingIndex >= teachingSequence.length) return;
-  renderTeachingEvent(teachingSequence[teachingIndex], teachingIndex);
-  teachingIndex += 1;
-  if (teachingIndex >= teachingSequence.length) {
-    document.querySelector('#teaching-lanes').classList.remove('demo-running');
-    document.querySelector('#teaching-lanes').classList.add('demo-complete');
-    document.querySelector('#pause-demo').disabled = true;
-    document.querySelector('#teaching-note').textContent = 'Replay complete: all processes recorded a consistent Chandy-Lamport cut.';
-    return;
-  }
-  teachingTimer = window.setTimeout(advanceTeaching, 1050);
+function drawMessage(event, index) {
+  const sourceProcess = event.kind === 'receive' ? event.from : event.process;
+  const targetProcess = event.kind === 'send' ? event.to : event.process;
+  const source = document.querySelector(`#lane-${sourceProcess}`).getBoundingClientRect();
+  const target = document.querySelector(`#lane-${targetProcess}`).getBoundingClientRect();
+  const timeline = document.querySelector('#timeline'); const bounds = timeline.getBoundingClientRect();
+  const x = source.left - bounds.left + source.width * eventPosition(index) / 100;
+  const targetX = target.left - bounds.left + target.width * eventPosition(index) / 100;
+  const y = source.top - bounds.top; const targetY = target.top - bounds.top;
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  const bend = Math.max(34, Math.abs(targetY - y) * .3); const direction = targetY > y ? 1 : -1;
+  path.setAttribute('d', `M ${x} ${y} C ${x + bend} ${y + direction * bend}, ${targetX - bend} ${targetY - direction * bend}, ${targetX} ${targetY}`);
+  path.setAttribute('class', `message-path active${event.kind === 'marker' ? ' marker-path' : ''}`);
+  path.setAttribute('data-channel', event.channel || 'marker'); path.setAttribute('stroke-width', event.kind === 'marker' ? '3' : '2');
+  const layer = document.querySelector('#message-layer'); layer.setAttribute('viewBox', `0 0 ${bounds.width} ${bounds.height}`); layer.appendChild(path);
+  const travelTime = event.kind === 'marker' ? 1250 : 1450;
+  schedule(() => { path.remove(); if (event.channel) { state.establishedChannels.add(event.channel); drawPermanentChannels(); } }, travelTime);
 }
 
-async function startTeaching() {
-  resetTeaching();
-  document.querySelector('#start-demo').disabled = true;
-  document.querySelector('#pause-demo').disabled = false;
-  document.querySelector('#teaching-lanes').classList.add('demo-running');
-  document.querySelector('#teaching-note').textContent = 'Resetting all processes to [0,0,0,0]...';
-  try { await fetch('/api/reset', { method: 'POST' }); } catch (error) { /* visual replay remains useful offline */ }
-  try { fetch('/api/demo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); } catch (error) { /* backend replay is best effort */ }
-  advanceTeaching();
+function advance() {
+  if (!state.running || state.paused || state.eventIndex >= state.events.length) return;
+  const event = state.events[state.eventIndex];
+  if (event.kind === 'internal') tick(event.process);
+  if (event.kind === 'send') { tick(event.process); event.sentClock = { ...state.clocks[event.process] }; drawMessage(event, state.eventIndex); }
+  if (event.kind === 'receive') { const senderEvent = [...state.events].reverse().find((item) => item.kind === 'send' && item.channel === event.channel && item.sentClock); receive(event.process, senderEvent?.sentClock || emptyClock()); drawMessage({ ...event, to: event.process }, state.eventIndex); }
+  if (event.kind === 'marker') { document.querySelector('#snapshot-boundary').classList.add('visible'); state.snapshotPoint = true; state.running = false; document.querySelector('#pause-demo').disabled = false; document.querySelector('#snapshot-button').disabled = false; document.querySelector('#simulation-message').textContent = 'SNAPSHOT POINT REACHED. Explain the cut, then capture the global state.'; document.querySelector('#snapshot-instruction').textContent = 'Snapshot point reached. Ready to capture the global state using Chandy-Lamport.'; document.querySelector('#current-step').textContent = 'Snapshot point reached'; ['restaurant1', 'restaurant2', 'delivery1'].forEach((target, pathIndex) => schedule(() => drawMessage({ ...event, to: target, channel: 'marker', kind: 'marker' }, state.eventIndex + pathIndex), pathIndex * 180)); }
+  addEventMarker(event, state.eventIndex, { ...state.clocks[event.process] });
+  updateClockLabel(event.process); state.eventIndex += 1; document.querySelector('#event-progress').textContent = `${state.eventIndex}/${state.events.length}`; document.querySelector('#current-step').textContent = event.label; document.querySelector('#simulation-message').textContent = event.note;
+  if (event.kind === 'marker') document.querySelector('#simulation-message').textContent = 'SNAPSHOT POINT REACHED. Explain the cut, then capture the global state.';
+  if (!state.snapshotPoint) schedule(advance, 1050);
 }
 
-document.querySelector('#start-demo').addEventListener('click', startTeaching);
-document.querySelector('#pause-demo').addEventListener('click', () => {
-  teachingPaused = !teachingPaused;
-  document.querySelector('#teaching-lanes').classList.toggle('demo-paused', teachingPaused);
-  document.querySelector('#pause-demo').textContent = teachingPaused ? 'Resume' : 'Pause';
-  if (!teachingPaused) { document.querySelector('#teaching-lanes').classList.add('demo-running'); advanceTeaching(); }
-});
-document.querySelector('#reset-demo').addEventListener('click', async () => { resetTeaching(); try { await fetch('/api/reset', { method: 'POST' }); } catch (error) { /* reset remains visual */ } });
+async function start() { if (state.snapshotPoint) return; const generation = state.generation; state.running = true; state.paused = false; document.querySelector('#start-demo').disabled = true; document.querySelector('#pause-demo').disabled = false; document.querySelector('#simulation-message').textContent = 'Initializing four independent local events...'; try { await fetch('/api/reset', { method: 'POST' }); } catch (error) { /* visual simulation remains usable */ } if (generation === state.generation) advance(); }
+function togglePause() { state.paused = !state.paused; document.querySelector('#timeline').classList.toggle('paused', state.paused); if (state.paused) pauseTimers(); else { resumeTimers(); } document.querySelector('#pause-demo').innerHTML = state.paused ? '▶ <span>Resume</span>' : 'Ⅱ <span>Pause</span>'; document.querySelector('#simulation-message').textContent = state.paused ? 'Simulation paused. Explain the current vector clocks.' : 'Simulation resumed.'; if (!state.paused && state.running && !state.timers.size) advance(); }
 
-document.querySelector('#place-order').addEventListener('click', () => {
-  const restaurant = document.querySelector('#restaurant').value;
-  pulseOrderChannel(restaurant);
-  postAction('/api/orders', { order_id: document.querySelector('#order-id').value.trim(), restaurant });
-});
-document.querySelector('#snapshot-button').addEventListener('click', () => postAction('/api/snapshot', {}));
-document.querySelector('#demo-button').addEventListener('click', startTeaching);
-document.querySelector('#event-log-table').addEventListener('click', (event) => {
-  const row = event.target.closest('tr[data-process]');
-  if (row) pulseProcessPath(row.dataset.process);
-});
-const eventLogPanel = document.querySelector('#event-panel');
-const eventLogToggle = document.querySelector('#event-log-toggle');
-eventLogToggle.addEventListener('click', () => {
-  const collapsed = eventLogPanel.classList.toggle('collapsed');
-  eventLogToggle.setAttribute('aria-expanded', String(!collapsed));
-  eventLogToggle.textContent = collapsed ? 'Expand' : 'Collapse';
-});
-refreshRange.addEventListener('input', () => { refreshValue.textContent = `${refreshRange.value}s`; scheduleRefresh(); });
-refreshToggle.addEventListener('change', scheduleRefresh);
-function scheduleRefresh() { clearInterval(refreshTimer); if (refreshToggle.checked) refreshTimer = setInterval(loadDashboard, Number(refreshRange.value) * 1000); }
-loadDashboard(); scheduleRefresh();
+function renderSnapshot(data) {
+  const snapshots = data.snapshot?.processes || {}; const entries = Object.entries(snapshots).filter(([, value]) => value);
+  const complete = entries.filter(([, value]) => value.complete).length; const channels = entries.flatMap(([, value]) => Object.values(value.channel_states || {})); const transit = channels.reduce((total, messages) => total + messages.length, 0);
+  document.querySelector('#processes-recorded').textContent = `${complete}/4`; document.querySelector('#channels-recorded').textContent = `${entries.reduce((total, [, value]) => total + Object.keys(value.channel_states || {}).length, 0)}/6`; document.querySelector('#messages-transit').textContent = transit;
+  document.querySelector('#result-status').textContent = data.snapshot?.complete ? 'COMPLETE' : 'RECORDING';
+  document.querySelector('#process-state-table').innerHTML = entries.length ? entries.map(([process, value]) => `<tr><td><b>${processIds[process]} ${labels[process]}</b></td><td>${clockArray(value.local_state?.vc || {})}</td><td>${escapeHtml(summarizeState(value.local_state))}</td><td class="${value.complete ? 'status-recorded' : 'status-open'}">${value.complete ? '✓ Recorded' : 'Recording...'}</td></tr>`).join('') : '<tr><td colspan="4" class="empty">Waiting for process states.</td></tr>';
+  const channelRows = Object.entries(snapshots).flatMap(([process, value]) => Object.entries(value?.channel_states || {}).map(([channel, messages]) => `<tr><td>${escapeHtml(channel)}</td><td>${escapeHtml(incomingChannels[channel] || `to ${processIds[process]}`)}</td><td>${messages.length ? messages.map((message) => escapeHtml(message.type)).join(', ') : '—'}</td><td class="status-recorded">✓ Recorded</td></tr>`));
+  document.querySelector('#channel-state-table').innerHTML = channelRows.length ? channelRows.join('') : '<tr><td colspan="4" class="empty">Waiting for channel states.</td></tr>';
+  if (data.snapshot?.complete) document.querySelector('#consistency-result').innerHTML = '<strong>✓ CONSISTENT GLOBAL SNAPSHOT</strong><span>No recorded receive depends on a send outside the captured process or channel state.</span>';
+}
+function summarizeState(localState) { const orders = Object.keys(localState?.orders || {}); return orders.length ? orders.map((order) => `${order}: ${localState.orders[order].status}`).join(', ') : 'No active orders'; }
+
+async function beginSnapshot() {
+  if (!state.snapshotPoint || state.countdown) return; state.countdownValue = 5; state.paused = false; document.querySelector('#pause-demo').disabled = false; document.querySelector('#pause-demo').innerHTML = 'Ⅱ <span>Pause</span>'; document.querySelector('#snapshot-button').disabled = true; document.querySelector('#snapshot-modal').hidden = false; document.querySelector('#snapshot-status').textContent = 'Countdown'; document.querySelector('#snapshot-instruction').textContent = 'Taking global snapshot at this instance...'; document.querySelector('#countdown-value').textContent = '5';
+  const generation = state.generation;
+  const countdownTick = async () => { if (generation !== state.generation) return; state.countdownValue -= 1; document.querySelector('#countdown-value').textContent = String(Math.max(0, state.countdownValue)); if (state.countdownValue > 0) { state.countdown = schedule(countdownTick, 1000); return; } state.countdown = null; document.querySelector('#snapshot-modal').hidden = true; document.querySelector('#snapshot-status').textContent = 'Capturing'; document.querySelector('#snapshot-instruction').textContent = 'Chandy-Lamport markers are travelling through the channels...'; try { await fetch('/api/snapshot', { method: 'POST' }); } catch (error) { if (generation === state.generation) document.querySelector('#snapshot-instruction').textContent = error.message; } if (generation !== state.generation) return; document.querySelector('#snapshot-results').hidden = false; pollSnapshot(generation); };
+  state.countdown = schedule(countdownTick, 1000);
+}
+async function pollSnapshot(generation) { if (generation !== state.generation) return; try { const response = await fetch('/api/dashboard', { cache: 'no-store' }); const data = await response.json(); if (generation !== state.generation) return; renderSnapshot(data); if (!data.snapshot?.complete) schedule(() => pollSnapshot(generation), 1800); else { document.querySelector('#snapshot-status').textContent = 'Complete'; document.querySelector('#snapshot-instruction').textContent = 'SNAPSHOT CAPTURED. Process and channel states are recorded below.'; } } catch (error) { if (generation === state.generation) schedule(() => pollSnapshot(generation), 2000); } }
+
+document.querySelector('#start-demo').addEventListener('click', start);
+document.querySelector('#pause-demo').addEventListener('click', togglePause);
+document.querySelector('#reset-demo').addEventListener('click', async () => { if (state.countdown) window.clearInterval(state.countdown); resetVisuals(); try { await fetch('/api/reset', { method: 'POST' }); } catch (error) { /* local reset remains available */ } });
+document.querySelector('#snapshot-button').addEventListener('click', beginSnapshot);
+resetVisuals();
+window.addEventListener('resize', drawPermanentChannels);

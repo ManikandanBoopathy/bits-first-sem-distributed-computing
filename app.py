@@ -368,14 +368,17 @@ def reset_all_processes():
 
 @app.post("/api/snapshot")
 def dashboard_snapshot():
-    try:
-        response = requests.post(
-            f"{channels.base_url('hub', USE_DOCKER)}/snapshot/start",
-            timeout=5,
-        )
-        return jsonify(response.json()), response.status_code
-    except requests.RequestException as error:
-        return jsonify({"error": str(error)}), 502
+    def start_snapshot_in_background():
+        try:
+            requests.post(
+                f"{channels.base_url('hub', USE_DOCKER)}/snapshot/start",
+                timeout=15,
+            )
+        except requests.RequestException:
+            pass
+
+    threading.Thread(target=start_snapshot_in_background, daemon=True).start()
+    return jsonify({"started": True, "message": "Snapshot capture started"}), 202
 
 
 def run_dashboard_demo():
