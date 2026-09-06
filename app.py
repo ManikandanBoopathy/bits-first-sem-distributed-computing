@@ -224,6 +224,25 @@ def get_state():
         })
 
 
+@app.post("/reset")
+def reset_process_state():
+    """Reset one process for a repeatable teaching/demo run."""
+    with state_lock:
+        state["orders"] = {}
+        state["log"] = []
+    with vc._lock:
+        vc.clock = {process: 0 for process in vc.processes}
+    with snap_lock:
+        snapshot.update({
+            "recording": False,
+            "complete": False,
+            "local_state": None,
+            "channel_states": {},
+            "markers_received": set(),
+        })
+    return jsonify({"reset": True, "process": PROCESS_NAME})
+
+
 @app.get("/api/dashboard")
 def dashboard_data():
     """Return a browser-friendly view of the whole distributed system.
@@ -329,6 +348,24 @@ def dashboard_place_order():
         return jsonify({"error": str(error)}), 502
 
 
+@app.post("/api/reset")
+def dashboard_reset():
+    return jsonify(reset_all_processes())
+
+
+def reset_all_processes():
+    results = {}
+    for process in channels.PROCESSES:
+        try:
+            response = requests.post(
+                f"{channels.base_url(process, USE_DOCKER)}/reset", timeout=3
+            )
+            results[process] = response.ok
+        except requests.RequestException:
+            results[process] = False
+    return {"reset": all(results.values()), "processes": results}
+
+
 @app.post("/api/snapshot")
 def dashboard_snapshot():
     try:
@@ -343,6 +380,7 @@ def dashboard_snapshot():
 
 def run_dashboard_demo():
     """Run the concurrent order and snapshot sequence without blocking the UI."""
+    reset_all_processes()
     order_ids = [
         f"demo-{int(time.time() * 1000)}-r1",
         f"demo-{int(time.time() * 1000)}-r2",

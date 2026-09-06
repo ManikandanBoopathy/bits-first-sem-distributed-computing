@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Team 14| Food Delivery Distributed Computing Assignment</title>
   <link rel="icon" type="image/png" href="https://res.cloudinary.com/krishnamohan479/image/upload/v1788624435/6335524_ufypph.png">
-    <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css', v='collapsible-events-15') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css', v='graph-replay-17') }}">
 </head>
 <body>
   <div class="app-shell">
@@ -44,6 +44,19 @@
           <div class="stat"><strong id="snapshot-status">-</strong><span>Snapshot state</span></div>
         </section>
 
+        <section class="teaching-panel panel">
+          <div class="teaching-header"><div><p class="teaching-kicker">REPEATABLE TEACHING REPLAY</p><h2>Vector clocks → consistent global state</h2><p>Start from zero, follow causal messages, pause at any event, then capture the Chandy-Lamport cut.</p></div><div class="teaching-controls"><button id="start-demo" class="primary">Start</button><button id="pause-demo" class="secondary" disabled>Pause</button><button id="reset-demo" class="ghost-button">Reset</button></div></div>
+          <div class="lane-legend"><span><i class="legend-dot internal"></i>Internal</span><span><i class="legend-dot message"></i>Message</span><span><i class="legend-dot marker"></i>Snapshot marker</span><span id="demo-clock-label">All clocks [0,0,0,0]</span></div>
+          <div id="teaching-lanes" class="teaching-lanes">
+            <div class="teaching-lane" data-process="hub"><div class="lane-label"><img src="{{ url_for('static', filename='hub.png') }}" alt="Hub"><span>Hub</span></div><div class="lane-track" id="lane-hub"></div></div>
+            <div class="teaching-lane" data-process="restaurant1"><div class="lane-label"><img src="{{ url_for('static', filename='re1.png') }}" alt="Restaurant 1"><span>Restaurant 1</span></div><div class="lane-track" id="lane-restaurant1"></div></div>
+            <div class="teaching-lane" data-process="restaurant2"><div class="lane-label"><img src="{{ url_for('static', filename='re2.png') }}" alt="Restaurant 2"><span>Restaurant 2</span></div><div class="lane-track" id="lane-restaurant2"></div></div>
+            <div class="teaching-lane" data-process="delivery1"><div class="lane-label"><img src="{{ url_for('static', filename='bike.png') }}" alt="Delivery 1"><span>Delivery 1</span></div><div class="lane-track" id="lane-delivery1"></div></div>
+            <div id="snapshot-cut" class="snapshot-cut"><span>Chandy-Lamport cut</span></div>
+          </div>
+          <div id="teaching-note" class="teaching-note">Press Start to replay the same causal sequence from [0,0,0,0].</div>
+        </section>
+
         <section class="top-grid">
           <article class="panel topology-panel"><div class="panel-heading"><h2>⌁ System topology</h2><span id="last-updated">Waiting for data</span></div><div id="topology" class="topology"><div class="node hub"><img src="{{ url_for('static', filename='hub.png') }}" alt="Hub logo"><small><i class="status-dot"></i>PORT 5000</small></div><div class="node restaurant-one"><img src="{{ url_for('static', filename='re1.png') }}" alt="Restaurant 1 logo"><small><i class="status-dot"></i>PORT 5001</small></div><div class="node restaurant-two"><img src="{{ url_for('static', filename='re2.png') }}" alt="Restaurant 2 logo"><small><i class="status-dot"></i>PORT 5002</small></div><div class="node delivery"><img src="{{ url_for('static', filename='bike.png') }}" alt="Delivery partner"><small><i class="status-dot"></i>PORT 5003</small></div><i class="line line-one"></i><i class="line line-two"></i><i class="line line-three"></i><i class="line line-four"></i></div></article>
           <article class="panel clock-panel"><div class="panel-heading"><h2>◷ Vector clocks</h2><span>latest local snapshots</span></div><div class="table-wrap"><table><thead><tr><th>Process</th><th>HU</th><th>RE</th><th>RE</th><th>DE</th></tr></thead><tbody id="clock-table"><tr><td colspan="5" class="empty">No process data yet</td></tr></tbody></table></div><p id="event-summary" class="evidence-summary">Event evidence: internal 0 · send 0 · receive 0</p></article>
@@ -58,6 +71,6 @@
       </div>
     </main>
   </div>
-  <script src="{{ url_for('static', filename='dashboard.js') }}"></script>
+  <script src="{{ url_for('static', filename='dashboard.js', v='graph-replay-17') }}"></script>
 </body>
 </html>
