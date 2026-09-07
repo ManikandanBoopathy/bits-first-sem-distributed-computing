@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Food Delivery Distributed System</title>
-  <link rel="icon" type="image/png" href="https://res.cloudinary.com/krishnamohan479/image/upload/v1788624435/6335524_ufypph.png">
-  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css', v='classroom-simulation-4') }}">
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='logo.png') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css', v='classroom-simulation-5') }}">
 </head>
 <body>
   <main class="classroom-shell">
@@ -23,35 +23,35 @@
     </header>
 
     <section class="status-strip" aria-label="Simulation status">
-      <span>Processes: <strong id="process-count">4/4</strong></span>
+      <span>Processes: <strong id="process-count">–/4</strong></span>
       <span>Events: <strong id="event-progress">0/0</strong></span>
       <span>Snapshot: <strong id="snapshot-status">Not Taken</strong></span>
       <span class="status-step">Current Step: <strong id="current-step">Waiting for START</strong></span>
     </section>
 
-    <section class="simulation-card" aria-label="Distributed process simulation">
+    <section class="simulation-card" aria-label="Distributed process space-time diagram">
       <div class="simulation-heading">
-        <div><p class="eyebrow">LIVE EVENT TIMELINE</p><h2>Four processes, one story</h2></div>
-        <p id="simulation-message">Press START to initialize each process with its first local event.</p>
+        <div><p class="eyebrow">LIVE EVENT TIMELINE — REAL PROCESS LOGS</p><h2>Four processes, one story</h2></div>
+        <p id="simulation-message">Press START to begin.</p>
       </div>
       <div id="timeline" class="timeline">
         <svg id="message-layer" class="message-layer" aria-hidden="true"><defs><linearGradient id="normal-message-gradient" x1="0" x2="1"><stop offset="0" stop-color="#7aa7ff"></stop><stop offset="1" stop-color="#2dd4bf"></stop></linearGradient><linearGradient id="marker-message-gradient" x1="0" x2="1"><stop offset="0" stop-color="#ff6b9d"></stop><stop offset="1" stop-color="#f8c15d"></stop></linearGradient></defs></svg>
-        <div class="snapshot-boundary" id="snapshot-boundary"><span>Snapshot point</span></div>
         <div class="process-lane" data-process="hub"><div class="process-label"><span class="process-badge p1">P1</span><div><strong>Hub</strong><small>[0,0,0,0]</small></div></div><div class="lane-track" id="lane-hub"></div></div>
         <div class="process-lane" data-process="restaurant1"><div class="process-label"><span class="process-badge p2">P2</span><div><strong>Restaurant 1</strong><small>[0,0,0,0]</small></div></div><div class="lane-track" id="lane-restaurant1"></div></div>
         <div class="process-lane" data-process="restaurant2"><div class="process-label"><span class="process-badge p3">P3</span><div><strong>Restaurant 2</strong><small>[0,0,0,0]</small></div></div><div class="lane-track" id="lane-restaurant2"></div></div>
         <div class="process-lane" data-process="delivery1"><div class="process-label"><span class="process-badge p4">P4</span><div><strong>Delivery</strong><small>[0,0,0,0]</small></div></div><div class="lane-track" id="lane-delivery1"></div></div>
       </div>
-      <div class="timeline-legend"><span><i class="legend-event"></i>Process event</span><span><i class="legend-message"></i>Application message</span><span><i class="legend-marker"></i>Snapshot marker</span><span class="clock-help">Each receive uses MAX + increment</span></div>
+      <div class="timeline-legend"><span><i class="legend-event"></i>Internal event</span><span><i class="legend-send"></i>Send</span><span><i class="legend-receive"></i>Receive</span><span><i class="legend-message"></i>Application message</span><span><i class="legend-marker"></i>Snapshot marker / recorded state</span><span><i class="legend-cut"></i>Consistent cut</span><span class="clock-help">Clock order: [hub, restaurant1, restaurant2, delivery1] · receive = max + 1</span></div>
+      <p id="concurrency-note" class="concurrency-note" hidden></p>
     </section>
 
     <section id="snapshot-stage" class="snapshot-stage" aria-live="polite">
-      <div class="snapshot-intro"><p class="eyebrow">GLOBAL STATE</p><h2>Chandy-Lamport capture</h2><p id="snapshot-instruction">The simulation will pause at a meaningful point so the class can inspect the cut before capturing it.</p></div>
+      <div class="snapshot-intro"><p class="eyebrow">GLOBAL STATE</p><h2>Chandy-Lamport capture</h2><p id="snapshot-instruction">The replay pauses once the orders settle so the class can inspect the cut before capturing it.</p></div>
       <div id="snapshot-results" class="snapshot-results" hidden>
-        <div class="result-summary"><div><span>Snapshot status</span><strong id="result-status">WAITING</strong></div><div><span>Processes recorded</span><strong id="processes-recorded">0/4</strong></div><div><span>Channels recorded</span><strong id="channels-recorded">0/6</strong></div><div><span>Messages in transit</span><strong id="messages-transit">0</strong></div></div>
+        <div class="result-summary"><div><span>Snapshot status</span><strong id="result-status">WAITING</strong></div><div><span>Processes recorded</span><strong id="processes-recorded">0/4</strong></div><div><span>Channels closed by marker</span><strong id="channels-recorded">0/6</strong></div><div><span>Messages in transit</span><strong id="messages-transit">0</strong></div></div>
         <div class="result-grid">
-          <article class="result-panel"><h3>Process states</h3><div class="table-wrap"><table><thead><tr><th>Process</th><th>Vector clock</th><th>Process state</th><th>Status</th></tr></thead><tbody id="process-state-table"><tr><td colspan="4" class="empty">Capture the global state to record process states.</td></tr></tbody></table></div></article>
-          <article class="result-panel"><h3>Channel states</h3><div class="table-wrap"><table><thead><tr><th>Channel</th><th>Direction</th><th>Messages in transit</th><th>Status</th></tr></thead><tbody id="channel-state-table"><tr><td colspan="4" class="empty">Channel recording will appear here.</td></tr></tbody></table></div></article>
+          <article class="result-panel"><h3>Process states (recorded at each process's cut)</h3><div class="table-wrap"><table><thead><tr><th>Process</th><th>Vector clock</th><th>Orders</th><th>Status</th></tr></thead><tbody id="process-state-table"><tr><td colspan="4" class="empty">Capture the global state to record process states.</td></tr></tbody></table></div></article>
+          <article class="result-panel"><h3>Channel states (received after own cut, before marker)</h3><div class="table-wrap"><table><thead><tr><th>Channel</th><th>Direction</th><th>Messages in transit</th><th>Status</th></tr></thead><tbody id="channel-state-table"><tr><td colspan="4" class="empty">Channel recording will appear here.</td></tr></tbody></table></div></article>
         </div>
         <div id="consistency-result" class="consistency-result"><strong>Snapshot not captured</strong><span>Process and channel states will be checked after marker propagation.</span></div>
       </div>
@@ -63,10 +63,10 @@
       <p class="eyebrow">CHANDY-LAMPORT</p>
       <h2 id="snapshot-modal-title">Capturing global state</h2>
       <div class="modal-countdown-ring"><strong id="countdown-value">5</strong></div>
-      <p>Taking a global snapshot<br><small>at this instance...</small></p>
-      <span class="modal-status">The system is frozen while the snapshot boundary is established.</span>
+      <p>Taking a global snapshot<br><small>while delivery messages are in transit…</small></p>
+      <span class="modal-status">Hub will record its state first, then markers propagate along every FIFO channel.</span>
     </section>
   </div>
-  <script src="{{ url_for('static', filename='dashboard.js', v='classroom-simulation-3') }}"></script>
+  <script src="{{ url_for('static', filename='dashboard.js', v='classroom-simulation-5') }}"></script>
 </body>
 </html>

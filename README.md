@@ -21,9 +21,28 @@ terminal:
 pip install -r requirements.txt   # only need `requests` on the host
 python demo.py --docker
 ```
-Open http://localhost:5000/ to use the live Food Delivery Command Center. The
-dashboard polls the four process health/state endpoints, shows vector clocks and
-recent events, and can place orders or start a global snapshot through the hub.
+Open http://localhost:5000/ for the classroom dashboard. Nothing in it is
+simulated client-side: it replays the four processes' *real* event logs as a
+space-time diagram (dots = events with their vector timestamps, arrows =
+messages paired per FIFO channel) and drives a real Chandy-Lamport snapshot:
+
+1. **Start** — resets all four processes, then `restaurant1` and `restaurant2`
+   place `order-101` / `order-102` concurrently. The hub assigns delivery and
+   confirms. The replay pauses once the system is quiet; the two `order_created`
+   events are highlighted as *concurrent* (incomparable vector clocks).
+2. **Capture Global Snapshot** — slows the `delivery1 → hub` channel
+   (`POST /config {"channel_delay_ms": …}` on delivery1), fires `PICKED_UP` /
+   `DELIVERED` for both orders, and has the hub initiate the snapshot while those
+   four messages are still travelling. They therefore show up in the hub's
+   recorded **channel state** for `d1_hub`, not in any process state. A purple
+   dashed line joins the four recorded local states — the actual cut.
+3. The results panel shows every recorded process state, every channel state,
+   and a verified consistency check: for each channel,
+   `sent@sender-cut == received@receiver-cut + in-transit`.
+
+Messages and markers share one FIFO queue per outgoing channel inside each
+process; set `CHANNEL_DELAY_MS=<ms>` in a process's environment to add transit
+latency to all of its outgoing channels (default `0`).
 
 ## Run it — locally, no Docker (quick dev loop)
 ```bash
@@ -49,8 +68,9 @@ python demo.py
 
 ## Why the captured global state is consistent
 The Chandy-Lamport algorithm guarantees the captured cut is consistent
-*by construction*, given FIFO channels (enforced here via a per-process
-send-lock that serializes outbound messages):
+*by construction*, given FIFO channels (enforced here by one outbound FIFO
+queue + worker per channel, which application messages and markers share; the
+"record local state, then enqueue markers" step is atomic with respect to sends):
 
 - Every process records its own local state **exactly once** — either when
   it initiates the snapshot, or upon receiving the *first* marker on any
@@ -68,13 +88,15 @@ send-lock that serializes outbound messages):
   before its own snapshot. This is exactly the definition of a consistent
   cut.
 
-In our test run, all 4 `/snapshot/state` endpoints reported `complete: true`
-with empty channel states for every channel — meaning by the time the
-snapshot ran, all in-flight order messages had already been fully
-processed, and the recorded local states line up with the final order
-statuses (`confirmed` at restaurants, `assigned` at delivery1, `delivered`
-at hub). This is itself evidence of a valid, consistent cut: the union of
-all recorded local + channel states neither creates nor drops any message.
+In the dashboard run, all 4 `/snapshot/state` endpoints report
+`complete: true`; the hub's recorded local state still shows both orders as
+`assigned`, delivery1's shows them `delivered`, and the hub's channel state for
+`d1_hub` holds exactly the four `PICKED_UP`/`DELIVERED` messages that bridge the
+two. Every other channel is empty. The per-channel check
+`sent@sender-cut == received@receiver-cut + in-transit` holds on all six
+channels (e.g. `d1_hub: 4 == 0 + 4`), so the union of recorded local + channel
+states neither creates nor drops any message — a consistent cut. `demo.py`
+(with no added latency) reaches the same conclusion with all channels empty.
 
 ## Project layout
 ```
