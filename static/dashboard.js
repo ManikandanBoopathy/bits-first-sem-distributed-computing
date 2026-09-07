@@ -2,7 +2,7 @@ const processes = ['hub', 'restaurant1', 'restaurant2', 'delivery1'];
 const labels = { hub: 'Hub', restaurant1: 'Restaurant 1', restaurant2: 'Restaurant 2', delivery1: 'Delivery' };
 const processIds = { hub: 'P1', restaurant1: 'P2', restaurant2: 'P3', delivery1: 'P4' };
 const incomingChannels = { r1_hub: 'restaurant1 -> hub', r2_hub: 'restaurant2 -> hub', hub_r1: 'hub -> restaurant1', hub_r2: 'hub -> restaurant2', hub_d1: 'hub -> delivery1', d1_hub: 'delivery1 -> hub' };
-const state = { clocks: {}, events: [], eventIndex: 0, running: false, paused: false, snapshotPoint: false, countdown: null, countdownValue: 5, timers: new Set(), currentMarker: null, generation: 0, establishedChannels: new Set() };
+const state = { clocks: {}, events: [], eventIndex: 0, running: false, paused: false, snapshotPoint: false, countdown: null, countdownValue: 5, timers: new Set(), currentMarker: null, generation: 0, establishedChannels: new Set(), connections: [] };
 
 function emptyClock() { return Object.fromEntries(processes.map((process) => [process, 0])); }
 function emptyClocks() { return Object.fromEntries(processes.map((process) => [process, emptyClock()])); }
@@ -41,10 +41,10 @@ function makeEvents() {
 
 function resetVisuals() {
   clearTimers();
-  state.generation += 1; state.clocks = emptyClocks(); state.events = makeEvents(); state.eventIndex = 0; state.running = false; state.paused = false; state.snapshotPoint = false; state.countdown = null; state.countdownValue = 5; state.currentMarker = null; state.establishedChannels = new Set();
+  state.generation += 1; state.clocks = emptyClocks(); state.events = makeEvents(); state.eventIndex = 0; state.running = false; state.paused = false; state.snapshotPoint = false; state.countdown = null; state.countdownValue = 5; state.currentMarker = null; state.establishedChannels = new Set(); state.connections = [];
   document.querySelectorAll('.lane-track').forEach((track) => { track.innerHTML = ''; });
   const layer = document.querySelector('#message-layer');
-  layer.querySelectorAll('.message-path').forEach((path) => path.remove());
+  layer.querySelectorAll('.message-path, .event-channel').forEach((path) => path.remove());
   document.querySelector('#snapshot-boundary').classList.remove('visible');
   document.querySelector('#start-demo').disabled = false;
   document.querySelector('#snapshot-button').disabled = true;
@@ -68,59 +68,68 @@ function eventPosition(index) { return 5 + (index / Math.max(1, state.events.len
 function addEventMarker(event, index, clock) {
   const track = document.querySelector(`#lane-${event.process}`);
   if (state.currentMarker) state.currentMarker.classList.remove('current');
-  const marker = document.createElement('div'); marker.className = `event-marker ${event.kind} active ${index % 2 ? 'label-below' : 'label-above'} current`; marker.style.left = `${eventPosition(index)}%`;
-  marker.innerHTML = `<i class="event-dot"></i><div class="event-card"><b>${escapeHtml(event.label)}</b><span>${escapeHtml(clockArray(clock))}</span></div>`;
-  marker.title = event.note; track.appendChild(marker); state.currentMarker = marker; schedule(() => marker.classList.remove('active'), 800);
+  const laneEventIndex = track.querySelectorAll('.event-marker').length;
+  const marker = document.createElement('div'); marker.className = `event-marker ${event.kind} level-${index % 3} clock-level-${laneEventIndex % 3}${event.pending ? ' pending-event' : ' current'}`; marker.style.left = `${eventPosition(index)}%`;
+  marker.innerHTML = `<span class="event-clock">${escapeHtml(clockArray(clock))}</span><i class="event-dot"></i><div class="event-card"><b>${escapeHtml(event.label)}</b><span>${escapeHtml(event.kind)}</span></div>`;
+  marker.title = event.note; track.appendChild(marker); event.marker = marker; state.currentMarker = marker;
+  return marker;
+}
+
+function showPendingReturnEvents() {
+  const pendingEvents = state.events.slice(state.eventIndex).filter((event) => event.channel === 'r1_hub' || event.channel === 'r2_hub');
+  pendingEvents.forEach((event) => {
+    event.pending = true;
+    addEventMarker(event, state.events.indexOf(event), emptyClock());
+  });
+  const pendingSends = pendingEvents.filter((event) => event.kind === 'send');
+  pendingSends.forEach((send) => {
+    const receive = pendingEvents.find((event) => event.kind === 'receive' && event.channel === send.channel);
+    if (receive) state.connections.push({ send, receive, channel: send.channel, pending: true });
+  });
+  drawPermanentChannels();
 }
 
 function drawPermanentChannels() {
   const timeline = document.querySelector('#timeline'); const bounds = timeline.getBoundingClientRect(); const layer = document.querySelector('#message-layer');
-  layer.querySelectorAll('.permanent-channel').forEach((path) => path.remove());
-  const routes = [
-    ['hub', 'restaurant1', 'hub_r1'], ['restaurant1', 'hub', 'r1_hub'], ['hub', 'restaurant2', 'hub_r2'], ['restaurant2', 'hub', 'r2_hub'], ['hub', 'delivery1', 'hub_d1'], ['delivery1', 'hub', 'd1_hub'],
-  ];
-  routes.filter(([, , channel]) => state.establishedChannels.has(channel)).forEach(([from, to, channel]) => {
-    const source = document.querySelector(`#lane-${from}`).getBoundingClientRect(); const target = document.querySelector(`#lane-${to}`).getBoundingClientRect();
-    const x = source.left - bounds.left + source.width * .38; const targetX = target.left - bounds.left + target.width * .68; const y = source.top - bounds.top; const targetY = target.top - bounds.top;
-    const bend = Math.max(34, Math.abs(targetY - y) * .3); const direction = targetY > y ? 1 : -1; const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    path.setAttribute('d', `M ${x} ${y} C ${x + bend} ${y + direction * bend}, ${targetX - bend} ${targetY - direction * bend}, ${targetX} ${targetY}`); path.setAttribute('class', 'permanent-channel'); path.setAttribute('data-channel', channel); layer.appendChild(path);
+  layer.querySelectorAll('.event-channel').forEach((path) => path.remove());
+  const channelColors = { hub_r1: '#287ff2', r1_hub: '#26ae79', hub_r2: '#ed9d20', r2_hub: '#e48718', hub_d1: '#6749db', d1_hub: '#d14f8a' };
+  state.connections.forEach(({ send, receive, channel, pending }) => {
+    if (!send?.marker || !receive?.marker) return;
+    const source = send.marker.querySelector('.event-dot').getBoundingClientRect();
+    const target = receive.marker.querySelector('.event-dot').getBoundingClientRect();
+    const x = source.left + source.width / 2 - bounds.left; const targetX = target.left + target.width / 2 - bounds.left;
+    const y = source.top + source.height / 2 - bounds.top; const targetY = target.top + target.height / 2 - bounds.top;
+    const bend = Math.max(28, Math.abs(targetY - y) * .35); const direction = targetY > y ? 1 : -1; const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', `M ${x} ${y} C ${x + bend} ${y + direction * bend}, ${targetX - bend} ${targetY - direction * bend}, ${targetX} ${targetY}`); path.setAttribute('class', `event-channel${pending ? ' pending-channel' : ''}`); path.setAttribute('data-channel', channel); path.setAttribute('stroke', channelColors[channel]); path.setAttribute('marker-end', 'url(#channel-arrow)'); layer.appendChild(path);
   });
   layer.setAttribute('viewBox', `0 0 ${bounds.width} ${bounds.height}`);
 }
 
-function drawMessage(event, index) {
-  const sourceProcess = event.kind === 'receive' ? event.from : event.process;
-  const targetProcess = event.kind === 'send' ? event.to : event.process;
-  const source = document.querySelector(`#lane-${sourceProcess}`).getBoundingClientRect();
-  const target = document.querySelector(`#lane-${targetProcess}`).getBoundingClientRect();
-  const timeline = document.querySelector('#timeline'); const bounds = timeline.getBoundingClientRect();
-  const x = source.left - bounds.left + source.width * eventPosition(index) / 100;
-  const targetX = target.left - bounds.left + target.width * eventPosition(index) / 100;
-  const y = source.top - bounds.top; const targetY = target.top - bounds.top;
-  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-  const bend = Math.max(34, Math.abs(targetY - y) * .3); const direction = targetY > y ? 1 : -1;
-  path.setAttribute('d', `M ${x} ${y} C ${x + bend} ${y + direction * bend}, ${targetX - bend} ${targetY - direction * bend}, ${targetX} ${targetY}`);
-  path.setAttribute('class', `message-path active${event.kind === 'marker' ? ' marker-path' : ''}`);
-  path.setAttribute('data-channel', event.channel || 'marker'); path.setAttribute('stroke-width', event.kind === 'marker' ? '3' : '2');
-  const layer = document.querySelector('#message-layer'); layer.setAttribute('viewBox', `0 0 ${bounds.width} ${bounds.height}`); layer.appendChild(path);
-  const travelTime = event.kind === 'marker' ? 1250 : 1450;
-  schedule(() => { path.remove(); if (event.channel) { state.establishedChannels.add(event.channel); drawPermanentChannels(); } }, travelTime);
+function drawMessage(event) {
+  if (event.kind === 'send') return;
+  if (event.kind === 'receive') {
+    const send = state.events.find((candidate) => candidate.kind === 'send' && candidate.channel === event.channel && candidate.marker);
+    if (send) state.connections.push({ send, receive: event, channel: event.channel });
+    drawPermanentChannels();
+  }
 }
 
 function advance() {
   if (!state.running || state.paused || state.eventIndex >= state.events.length) return;
   const event = state.events[state.eventIndex];
   if (event.kind === 'internal') tick(event.process);
-  if (event.kind === 'send') { tick(event.process); event.sentClock = { ...state.clocks[event.process] }; drawMessage(event, state.eventIndex); }
-  if (event.kind === 'receive') { const senderEvent = [...state.events].reverse().find((item) => item.kind === 'send' && item.channel === event.channel && item.sentClock); receive(event.process, senderEvent?.sentClock || emptyClock()); drawMessage({ ...event, to: event.process }, state.eventIndex); }
+  if (event.kind === 'send') { tick(event.process); event.sentClock = { ...state.clocks[event.process] }; }
+  if (event.kind === 'receive') { const senderEvent = [...state.events].reverse().find((item) => item.kind === 'send' && item.channel === event.channel && item.sentClock); receive(event.process, senderEvent?.sentClock || emptyClock()); }
   if (event.kind === 'marker') { document.querySelector('#snapshot-boundary').classList.add('visible'); state.snapshotPoint = true; state.running = false; document.querySelector('#pause-demo').disabled = false; document.querySelector('#snapshot-button').disabled = false; document.querySelector('#simulation-message').textContent = 'SNAPSHOT POINT REACHED. Explain the cut, then capture the global state.'; document.querySelector('#snapshot-instruction').textContent = 'Snapshot point reached. Ready to capture the global state using Chandy-Lamport.'; document.querySelector('#current-step').textContent = 'Snapshot point reached'; ['restaurant1', 'restaurant2', 'delivery1'].forEach((target, pathIndex) => schedule(() => drawMessage({ ...event, to: target, channel: 'marker', kind: 'marker' }, state.eventIndex + pathIndex), pathIndex * 180)); }
   addEventMarker(event, state.eventIndex, { ...state.clocks[event.process] });
+  if (event.kind === 'marker') showPendingReturnEvents();
+  drawMessage(event);
   updateClockLabel(event.process); state.eventIndex += 1; document.querySelector('#event-progress').textContent = `${state.eventIndex}/${state.events.length}`; document.querySelector('#current-step').textContent = event.label; document.querySelector('#simulation-message').textContent = event.note;
   if (event.kind === 'marker') document.querySelector('#simulation-message').textContent = 'SNAPSHOT POINT REACHED. Explain the cut, then capture the global state.';
   if (!state.snapshotPoint) schedule(advance, 1050);
 }
 
-async function start() { if (state.snapshotPoint) return; const generation = state.generation; state.running = true; state.paused = false; document.querySelector('#start-demo').disabled = true; document.querySelector('#pause-demo').disabled = false; document.querySelector('#simulation-message').textContent = 'Initializing four independent local events...'; try { await fetch('/api/reset', { method: 'POST' }); } catch (error) { /* visual simulation remains usable */ } if (generation === state.generation) advance(); }
+async function start() { if (state.snapshotPoint) return; const generation = state.generation; state.running = true; state.paused = false; document.querySelector('#start-demo').disabled = true; document.querySelector('#pause-demo').disabled = false; document.querySelector('#simulation-message').textContent = 'Starting four real distributed processes...'; try { const resetResponse = await fetch('/api/reset', { method: 'POST' }); if (!resetResponse.ok) throw new Error('Could not reset all processes.'); const demoResponse = await fetch('/api/demo', { method: 'POST' }); if (!demoResponse.ok) throw new Error('Could not start the distributed workflow.'); } catch (error) { document.querySelector('#simulation-message').textContent = error.message; } if (generation === state.generation) advance(); }
 function togglePause() { state.paused = !state.paused; document.querySelector('#timeline').classList.toggle('paused', state.paused); if (state.paused) pauseTimers(); else { resumeTimers(); } document.querySelector('#pause-demo').innerHTML = state.paused ? '▶ <span>Resume</span>' : 'Ⅱ <span>Pause</span>'; document.querySelector('#simulation-message').textContent = state.paused ? 'Simulation paused. Explain the current vector clocks.' : 'Simulation resumed.'; if (!state.paused && state.running && !state.timers.size) advance(); }
 
 function renderSnapshot(data) {

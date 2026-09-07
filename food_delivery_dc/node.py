@@ -21,8 +21,11 @@ class Process:
     def __init__(self, name, config, log_dir="logs"):
         self.name = name
         self.config = config
-        self.names_sorted = sorted(config.keys())
-        self.index_map = {n: i for i, n in enumerate(self.names_sorted)}
+        # Preserve the configured process order; do not sort alphabetically.
+        # The vector clock index is tied to this order, and the lab expects
+        # OrderProcessor to remain at index 0 in the default config.
+        self.names_in_order = list(config.keys())
+        self.index_map = {n: i for i, n in enumerate(self.names_in_order)}
         self.n = len(config)
         self.clock = VectorClock(self.n, self.index_map[self.name])
 
@@ -192,8 +195,7 @@ class Process:
                 self.markers_received.add(sender)
                 self.log(f"SNAPSHOT : first MARKER from {sender}; channel[{sender}] state = []")
                 for peer in self.peers:
-                    if peer != sender:
-                        self._send_marker(peer)
+                    self._send_marker(peer)
             else:
                 if sender not in self.markers_received:
                     self.markers_received.add(sender)
