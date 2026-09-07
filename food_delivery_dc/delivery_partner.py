@@ -18,6 +18,10 @@ def main():
             time.sleep(1.0)
             p.local_state[f"Order#{oid}"] = "OUT_FOR_DELIVERY"
             p.send("OrderProcessor", "PickedUp", {"order_id": oid})
+            time.sleep(0.5)
+            p.local_state[f"Order#{oid}"] = "DELIVERED"
+            p.internal_event(f"Delivered Order#{oid}")
+            p.send("OrderProcessor", "Delivered", {"order_id": oid})
 
     p.on_message_callback = on_message
     p.start_server()

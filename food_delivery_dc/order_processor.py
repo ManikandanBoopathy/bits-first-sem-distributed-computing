@@ -10,6 +10,10 @@ def main():
         if mtype == "PickedUp":
             oid = payload["order_id"]
             p.local_state[f"Order#{oid}"] = "OUT_FOR_DELIVERY"
+        elif mtype == "Delivered":
+            oid = payload["order_id"]
+            p.local_state[f"Order#{oid}"] = "DELIVERED"
+            p.internal_event(f"Order#{oid} DELIVERED")
 
     p.on_message_callback = on_message
     p.start_server()
