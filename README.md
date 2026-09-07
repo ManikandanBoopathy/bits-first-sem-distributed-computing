@@ -1,56 +1,48 @@
-# Distributed Food Delivery Monitor
+# Distributed Food Delivery System
 CCZG 526 — Lab Assignment I (Vector Clocks + Chandy-Lamport Global Snapshot)
 
-Built following Spec-Driven Development (SDD) — see `.specify/memory/constitution.md`
-and `specs/001-distributed-food-delivery-monitor/` for the constitution, spec, plan,
-and tasks that drove this implementation.
+This project is built using **Spec-Driven Development (SDD)**. The requirements,
+architecture, and implementation tasks are documented in
+`specs/002-distributed-food-delivery-system/`.
 
 ## What this is
-Four independent Flask processes — `restaurant1`, `restaurant2`, `delivery1`, `hub` —
-communicate purely over HTTP, each keeping its own in-memory Vector Clock. The system
-demonstrates internal/send/receive events, a genuine pair of concurrent events, and a
-full Chandy-Lamport global snapshot (process states + channel states).
+`food_delivery_dc` is a distributed food-delivery simulation made up of four
+independent Python processes communicating over TCP sockets:
+`OrderProcessor`, `Restaurant1`, `Restaurant2`, and `DeliveryPartner`.
+Each process maintains its own vector clock and records internal, send, and
+receive events. The system demonstrates concurrent events and captures a
+Chandy-Lamport global snapshot containing process state and in-transit messages.
 
-## Run it — Docker (recommended, matches the "everyone runs the same code" requirement)
-```bash
-docker compose up --build
-```
-Wait for all 4 containers to report "Running on http://0.0.0.0:5000", then in another
-terminal:
-```bash
-pip install -r requirements.txt   # only need `requests` on the host
-python demo.py --docker
-```
-Open http://localhost:5000/ to use the live Food Delivery Command Center. The
-dashboard polls the four process health/state endpoints, shows vector clocks and
-recent events, and can place orders or start a global snapshot through the hub.
+## Run the demo and test cases
+The implementation uses only the Python standard library. From the repository root:
 
-## Run it — locally, no Docker (quick dev loop)
 ```bash
-pip install -r requirements.txt
-PROCESS_NAME=hub          PORT=5000 python app.py &
-PROCESS_NAME=restaurant1  PORT=5001 python app.py &
-PROCESS_NAME=restaurant2  PORT=5002 python app.py &
-PROCESS_NAME=delivery1    PORT=5003 python app.py &
-python demo.py
+cd food_delivery_dc
+python run_demo.py
 ```
 
-`demo.py` will:
-1. Wait for all 4 processes to be healthy.
-2. Fire `restaurant1` and `restaurant2` order placements concurrently.
-3. Run the delivery lifecycle (assign → pickup → deliver) through `hub`.
-4. Print both orders' vector clocks and explicitly `compare()` them —
-   expected result: **`concurrent`**, since neither restaurant's send event
-   happened-before the other's.
-5. Print every process's full event log (internal / send / receive, each
-   tagged with its vector timestamp).
-6. Trigger a Chandy-Lamport snapshot from `hub` and print + save
-   (`global_snapshot.json`) the assembled global state.
+`run_demo.py` starts all four processes, runs the order and delivery flow, finds
+a concurrent vector-clock event pair, and prints the captured Chandy-Lamport
+global snapshot and its consistency analysis.
 
-## Why the captured global state is consistent
-The Chandy-Lamport algorithm guarantees the captured cut is consistent
-*by construction*, given FIFO channels (enforced here via a per-process
-send-lock that serializes outbound messages):
+To run the acceptance test cases:
+
+```bash
+cd food_delivery_dc
+python run_test_cases.py
+```
+
+The test runner starts and stops the same four processes automatically, then
+reports the results for the normal order flow, concurrent events, and snapshot
+behavior. Logs and snapshot files are written to `food_delivery_dc/logs/`.
+
+## Distributed execution
+For a detailed single-machine walkthrough and instructions for running the four
+processes on separate cloud-lab nodes, see
+[food_delivery_dc/README.md](food_delivery_dc/README.md).
+
+## Why the snapshot is consistent
+The Chandy-Lamport algorithm guarantees a consistent cut over the FIFO channels:
 
 - Every process records its own local state **exactly once** — either when
   it initiates the snapshot, or upon receiving the *first* marker on any
@@ -62,30 +54,16 @@ send-lock that serializes outbound messages):
 - Because channels are FIFO, a marker on a channel guarantees no
   pre-snapshot message from that channel can arrive after it — so nothing
   is missed and nothing is double-counted.
-- Consequently, no message appears "received" by a process's recorded state
-  without also appearing either (a) in some channel's recorded state, or
-  (b) already reflected in the sender's recorded local state as sent
-  before its own snapshot. This is exactly the definition of a consistent
-  cut.
-
-In our test run, all 4 `/snapshot/state` endpoints reported `complete: true`
-with empty channel states for every channel — meaning by the time the
-snapshot ran, all in-flight order messages had already been fully
-processed, and the recorded local states line up with the final order
-statuses (`confirmed` at restaurants, `assigned` at delivery1, `delivered`
-at hub). This is itself evidence of a valid, consistent cut: the union of
-all recorded local + channel states neither creates nor drops any message.
+- Consequently, no message appears as received in the recorded state without
+  also appearing in the sender's recorded state or in a recorded channel state.
 
 ## Project layout
 ```
-common/vector_clock.py   VectorClock class + compare()
-common/channels.py       static topology, ports, in-memory auth tokens
-app.py                   single Flask app, role selected by PROCESS_NAME
-demo.py                  host-side test/demo orchestration
-Dockerfile               one image for all 4 roles
-docker-compose.yml       4 services from that one image
-.specify/                Spec Kit constitution
-specs/.../spec.md         feature spec
-specs/.../plan.md         architecture + sequence diagrams (Mermaid)
-specs/.../tasks.md        task checklist
+food_delivery_dc/        four-process TCP implementation
+  run_demo.py             demo runner and snapshot analysis
+  run_test_cases.py       acceptance-test runner
+  node.py                 socket process base class and snapshots
+  vector_clock.py         vector-clock implementation
+  logs/                   runtime logs and snapshot JSON files
+specs/002-.../            SDD specification, plan, and research artifacts
 ```
